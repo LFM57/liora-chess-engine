@@ -49,10 +49,9 @@ int Evaluate(const Board *pos) {
 
         // Pion isolé (Aucun pion blanc sur les colonnes adjacentes)
         if ((wp & adjFiles) == 0) { mg -= 15; eg -= 15; }
-
-        U64 aheadMask = 0xFFFFFFFFFFFFFFFFULL << (8 * (r + 1));
         
         // Pion Doublé (Un autre pion de NOTRE couleur devant nous sur la même colonne)
+        U64 aheadMask = (r < 7) ? (0xFFFFFFFFFFFFFFFFULL << (8 * (r + 1))) : 0ULL;
         if (wp & FileMask[f] & aheadMask) { mg -= 10; eg -= 20; }
 
         // Pion Passé (Aucun pion noir devant sur sa colonne ou adjacentes)
@@ -291,13 +290,25 @@ int Quiescence(Board *pos, int alpha, int beta) {
     CheckTime();
     if(StopSearch) return 0;
     
-    int score = Evaluate(pos);
-    if(score >= beta) return beta;
-    if(score > alpha) alpha = score;
+    int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
+    
+    int score = -INF;
+    // On ne fait le "Stand-Pat" QUE si le roi n'est pas en échec
+    if (!inCheck) {
+        score = Evaluate(pos);
+        if(score >= beta) return beta;
+        if(score > alpha) alpha = score;
+    }
     
     Move moves[MAX_MOVES];
     int count = 0;
-    GenerateCaptures(pos, moves, &count);
+    
+    // Si on est en échec, il faut générer TOUS les coups pour trouver une parade
+    if (inCheck) {
+        GenerateMoves(pos, moves, &count);
+    } else {
+        GenerateCaptures(pos, moves, &count);
+    }
     
     // MVV-LVA Move Ordering in QSearch
     int moveScores[MAX_MOVES];
@@ -309,10 +320,11 @@ int Quiescence(Board *pos, int alpha, int beta) {
             int attacker = (pType != EMPTY) ? (pType % 6) : P;
             moveScores[i] = 100000 + MvvLva[attacker][moves[i].capture % 6];
         } else {
-            moveScores[i] = 0;
+            moveScores[i] = History[pos->side][moves[i].from][moves[i].to];
         }
     }
     
+    int legalMoves = 0;
     for(int i=0; i<count; ++i) {
         int maxS = -2000000000; int maxI = i;
         for(int j=i; j<count; ++j) {
@@ -321,8 +333,8 @@ int Quiescence(Board *pos, int alpha, int beta) {
         Move temp = moves[i]; moves[i] = moves[maxI]; moves[maxI] = temp;
         int tempS = moveScores[i]; moveScores[i] = moveScores[maxI]; moveScores[maxI] = tempS;
         
-        // Delta Pruning
-        if (moves[i].promoted == EMPTY && moves[i].move_type != 1) {
+        // Delta Pruning : Uniquement hors échec
+        if (!inCheck && moves[i].promoted == EMPTY && moves[i].move_type != 1) {
             int capVal = PieceValuesMG[moves[i].capture % 6];
             if (score + capVal + 200 < alpha) {
                 continue;
@@ -331,6 +343,7 @@ int Quiescence(Board *pos, int alpha, int beta) {
         
         Move move = moves[i];
         if(!MakeMove(pos, move)) continue;
+        legalMoves++;
         int val = -Quiescence(pos, -beta, -alpha);
         TakeMove(pos, move);
         
@@ -339,6 +352,12 @@ int Quiescence(Board *pos, int alpha, int beta) {
         if(val >= beta) return beta;
         if(val > alpha) alpha = val;
     }
+    
+    // Si on était en échec et qu'aucun coup n'est légal -> Mat !
+    if (inCheck && legalMoves == 0) {
+        return -MATE_SCORE + pos->ply;
+    }
+    
     return alpha;
 }
 
@@ -351,12 +370,13 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     
     if(IsRepetition(pos) || pos->fiftyMove >= 100) return 0;
     
-    // Check Extension
+    // Check Extension (étendue à tous les nœuds pour ne pas rater les combinaisons)
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side^1), pos);
     int isPvNode = (beta - alpha > 1);
     
-    // Limit check extensions to depth > 1 to avoid unbounded depth explosions
-    if(inCheck && isPvNode && depth > 1 && pos->ply < MAX_DEPTH - 1) depth++;
+    if(inCheck && pos->ply < MAX_DEPTH - 1) {
+        depth++;
+    }
 
     if(depth <= 0) return Quiescence(pos, alpha, beta);
     
@@ -495,6 +515,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         movesSearched++;
         childPv[0].from = NO_SQ; // Reset child PV terminator for each move
         
+        // Détecter si le coup qu'on vient de jouer met l'adversaire en échec
+        int givesCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
+        
         int score;
         if(movesSearched == 1) {
             // Full window search for first move
@@ -502,7 +525,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         } else {
             // Late Move Reduction (LMR) + Principal Variation Search (PVS)
             int reduction = 0;
-            if(depth >= 3 && movesSearched > 4 && move.capture == EMPTY && move.promoted == EMPTY && !inCheck) {
+            // Ne JAMAIS réduire si le coup donne échec ou si on était en échec
+            if(depth >= 3 && movesSearched > 4 && move.capture == EMPTY && move.promoted == EMPTY && !inCheck && !givesCheck) {
                 reduction = 1;
                 if (movesSearched > 6) reduction++;  
                 if (depth > 6) reduction++;          
