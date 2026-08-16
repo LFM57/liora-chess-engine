@@ -235,11 +235,15 @@ void ClearTT() {
 void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
     int index = key % TranspositionTable.numEntries;
     
-    // Adjust mate scores relative to root ply before storing
     if (score > MATE_SCORE - MAX_DEPTH) score += ply;
     else if (score < -MATE_SCORE + MAX_DEPTH) score -= ply;
     
-    if (TranspositionTable.entries[index].key == key) {
+    // Protection : Ne pas laisser une recherche superficielle écraser une entrée plus profonde
+    if (TranspositionTable.entries[index].key != 0 && TranspositionTable.entries[index].key != key) {
+        if (TranspositionTable.entries[index].depth > depth) {
+            return;
+        }
+    } else if (TranspositionTable.entries[index].key == key) {
         if (TranspositionTable.entries[index].depth > depth && flag != 0) {
             return;
         }
@@ -249,9 +253,13 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
     TranspositionTable.entries[index].depth = depth;
     TranspositionTable.entries[index].score = score;
     TranspositionTable.entries[index].flag = flag;
-    TranspositionTable.entries[index].move_from = move.from;
-    TranspositionTable.entries[index].move_to = move.to;
-    TranspositionTable.entries[index].move_prom = move.promoted;
+    
+    // Préserver le coup précédent s'il n'y a pas de meilleur coup légal sur ce pli
+    if (move.from != NO_SQ) {
+        TranspositionTable.entries[index].move_from = move.from;
+        TranspositionTable.entries[index].move_to = move.to;
+        TranspositionTable.entries[index].move_prom = move.promoted;
+    }
 }
 
 TTEntry* ProbeTT(U64 key) {
@@ -412,17 +420,18 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         }
     }
 
-    // Reverse Futility Pruning (Static Null Move)
+    int static_eval = Evaluate(pos);
+
+    // Reverse Futility Pruning (retour propre de beta)
     if (!isPvNode && !inCheck && depth <= 4 && allow_null) {
-        int static_eval = Evaluate(pos);
-        int margin = 120 * depth; // Marge de sécurité (ex: 1 pion d'avance à depth 1)
+        int margin = 120 * depth;
         if (static_eval - margin >= beta) {
-            return static_eval; // L'évaluation statique est tellement bonne qu'on coupe direct
+            return beta;
         }
     }
 
-    // Null Move Pruning (ajout de la protection has_major_pieces)
-    if(allow_null && depth >= 3 && !inCheck && has_major_pieces) {
+    // Null Move Pruning (uniquement si l'évaluation statique bat déjà beta)
+    if(allow_null && depth >= 3 && !inCheck && has_major_pieces && static_eval >= beta) {
         // Make Null
         int savedEnPas = pos->enPas;
         U64 savedKey = pos->posKey;
@@ -470,9 +479,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     for(int i=0; i<count; ++i) {
         moveScores[i] = 0;
         if(moves[i].from == bestMoveTT.from && moves[i].to == bestMoveTT.to) moveScores[i] = 2000000;
-        else if(moves[i].promoted != EMPTY) moveScores[i] = 150000 + moves[i].promoted; // Prioritize Promotions
+        else if(moves[i].promoted != EMPTY) moveScores[i] = 150000 + moves[i].promoted;
         else if(moves[i].capture != EMPTY) {
-            // Find attacker type dynamically
             int type = GetPieceAt(pos, moves[i].from, pos->side);
             int attacker = (type != EMPTY) ? (type % 6) : P;
             moveScores[i] = 100000 + MvvLva[attacker][moves[i].capture % 6];
@@ -480,7 +488,10 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         else {
             if(moves[i].from == KillerMoves[pos->ply][0].from && moves[i].to == KillerMoves[pos->ply][0].to) moveScores[i] = 90000;
             else if(moves[i].from == KillerMoves[pos->ply][1].from && moves[i].to == KillerMoves[pos->ply][1].to) moveScores[i] = 80000;
-            else moveScores[i] = History[pos->side][moves[i].from][moves[i].to];
+            else {
+                int hScore = History[pos->side][moves[i].from][moves[i].to];
+                moveScores[i] = (hScore > 70000) ? 70000 : hScore;
+            }
         }
     }
     
@@ -503,20 +514,22 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         
         Move move = moves[i];
         
-        // --- LATE MOVE PRUNING (LMP) ---
-        if (!isPvNode && !inCheck && depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
+        if(!MakeMove(pos, move)) continue;
+        
+        // Détecter si le coup joué donne échec
+        int givesCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
+        
+        // LMP : On n'élague que si le coup ne donne PAS échec
+        if (!isPvNode && !inCheck && !givesCheck && depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
             int lmpThreshold = 3 + 2 * depth * depth; 
             if (movesSearched >= lmpThreshold) {
+                TakeMove(pos, move);
                 continue;
             }
         }
         
-        if(!MakeMove(pos, move)) continue;
         movesSearched++;
-        childPv[0].from = NO_SQ; // Reset child PV terminator for each move
-        
-        // Détecter si le coup qu'on vient de jouer met l'adversaire en échec
-        int givesCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
+        childPv[0].from = NO_SQ;
         
         int score;
         if(movesSearched == 1) {
