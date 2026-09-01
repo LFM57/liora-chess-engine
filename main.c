@@ -138,6 +138,12 @@ int main() {
             ParsePosition(line);
         } else if(!strncmp(line, "go", 2)) {
             ParseGo(line);
+        } else if(!strncmp(line, "datagen", 7)) {
+            int games = 1000;
+            int plies = 200;
+            char *p = line + 7;
+            if (*p) games = atoi(p);
+            RunDataGen(games, plies, "dataset.txt");
         } else if(!strncmp(line, "quit", 4)) {
             break;
         }

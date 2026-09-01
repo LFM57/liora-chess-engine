@@ -18,7 +18,7 @@
 typedef unsigned long long U64;
 
 // Constants
-#define NAME "Liora v9.3 C"
+#define NAME "Liora v10.1 F"
 #define AUTHOR "LFM"
 #define MAX_MOVES 256
 #define MAX_DEPTH 64
@@ -53,7 +53,7 @@ typedef struct {
 // Simplified: We'll use a struct in logic but pack it for TT if needed. 
 // For this engine, we'll keep it simple.
 
-typedef struct {
+typedef struct Board {
     int board[64];  // Fast Mailbox representation (O(1) piece lookup)
     U64 pieces[13]; // 0-11 for pieces, 12 reserved
     U64 pawns[3];   // 0=White, 1=Black, 2=Both
@@ -158,5 +158,8 @@ Move GetBookMove(const Board *pos);
 int GetRank(int sq);
 int GetFile(int sq);
 int GetPieceAt(const Board *pos, int sq, int side);
+
+// Datagen
+void RunDataGen(int numGames, int maxPlies, const char *outFile);
 
 #endif

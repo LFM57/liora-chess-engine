@@ -13,15 +13,15 @@ typedef struct {
     int computed[2]; // 1 if calculated, 0 if needs refresh
 } Accumulator;
 
-// Forward declaration of Board to prevent circular dependencies
-typedef struct Board Board;
+// Forward declaration of tagged struct
+struct Board;
 
 // NNUE Public API
 void InitNNUE(const char *filename);
 int LoadNNUE(const char *filename);
-int EvaluateNNUE(const Board *pos);
+int EvaluateNNUE(const struct Board *pos);
 
-void RefreshAccumulator(Accumulator *acc, const Board *pos, int side);
-void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const Board *pos, int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece);
+void RefreshAccumulator(Accumulator *acc, const struct Board *pos, int side);
+void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const struct Board *pos, int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece);
 
 #endif

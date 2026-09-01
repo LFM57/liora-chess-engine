@@ -803,3 +803,130 @@ int IsRepetition(const Board *pos) {
     }
     return 0;
 }
+
+// Generates a FEN string from current Board state
+void GetBoardFen(const Board *pos, char *fen) {
+    int rank, file, emptyCount;
+    char *ptr = fen;
+
+    for (rank = 7; rank >= 0; rank--) {
+        emptyCount = 0;
+        for (file = 0; file < 8; file++) {
+            int sq = rank * 8 + file;
+            int piece = pos->board[sq];
+
+            if (piece == EMPTY) {
+                emptyCount++;
+            } else {
+                if (emptyCount > 0) {
+                    *ptr++ = '0' + emptyCount;
+                    emptyCount = 0;
+                }
+                char pChars[] = "PNBRQKpnbrqk";
+                *ptr++ = pChars[piece];
+            }
+        }
+        if (emptyCount > 0) *ptr++ = '0' + emptyCount;
+        if (rank > 0) *ptr++ = '/';
+    }
+
+    *ptr++ = ' ';
+    *ptr++ = (pos->side == WHITE) ? 'w' : 'b';
+    *ptr++ = ' ';
+
+    if (pos->castlePerm == 0) {
+        *ptr++ = '-';
+    } else {
+        if (pos->castlePerm & WKCA) *ptr++ = 'K';
+        if (pos->castlePerm & WQCA) *ptr++ = 'Q';
+        if (pos->castlePerm & BKCA) *ptr++ = 'k';
+        if (pos->castlePerm & BQCA) *ptr++ = 'q';
+    }
+
+    *ptr++ = ' ';
+    if (pos->enPas == NO_SQ) {
+        *ptr++ = '-';
+    } else {
+        *ptr++ = 'a' + (pos->enPas % 8);
+        *ptr++ = '1' + (pos->enPas / 8);
+    }
+    *ptr = '\0';
+}
+
+// Runs self-play data generation
+void RunDataGen(int numGames, int maxPlies, const char *outFile) {
+    FILE *f = fopen(outFile, "a");
+    if (!f) {
+        printf("Error: Could not open output file %s\n", outFile);
+        return;
+    }
+
+    printf("Starting self-play generation of %d games...\n", numGames);
+
+    Board gPos;
+    char fenBuffer[256];
+
+    for (int g = 1; g <= numGames; ++g) {
+        ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &gPos);
+
+        // Store positions of the game in memory to assign the final outcome at the end
+        char gameFens[512][128];
+        int gameScores[512];
+        int posCount = 0;
+
+        // 1. Play 8 random opening half-moves for book diversity
+        int randomPlies = 6 + (rand() % 4);
+        for (int r = 0; r < randomPlies; ++r) {
+            Move mList[MAX_MOVES]; int count = 0;
+            GenerateMoves(&gPos, mList, &count);
+            Move legal[MAX_MOVES]; int lCount = 0;
+            for (int i = 0; i < count; ++i) {
+                if (MakeMove(&gPos, mList[i])) {
+                    TakeMove(&gPos, mList[i]);
+                    legal[lCount++] = mList[i];
+                }
+            }
+            if (lCount == 0) break;
+            MakeMove(&gPos, legal[rand() % lCount]);
+        }
+
+        // 2. Play game using search
+        float gameResult = 0.5f; // Draw default
+        for (int ply = 0; ply < maxPlies; ++ply) {
+            Move pvLine[MAX_DEPTH];
+            pvLine[0].from = NO_SQ;
+            StopSearch = 0;
+            Nodes = 0;
+            gPos.ply = 0;
+
+            int score = Negamax(&gPos, 5, -INF, INF, 1, pvLine);
+
+            // Record quiet positions (skip if in check or during extreme captures)
+            int inCheck = SqAttacked(gPos.king_sq[gPos.side], gPos.side ^ 1, &gPos);
+            if (!inCheck && posCount < 500 && abs(score) < 3000) {
+                GetBoardFen(&gPos, gameFens[posCount]);
+                gameScores[posCount] = (gPos.side == WHITE) ? score : -score;
+                posCount++;
+            }
+
+            if (score > MATE_SCORE - 100) { gameResult = (gPos.side == WHITE) ? 1.0f : 0.0f; break; }
+            if (score < -MATE_SCORE + 100) { gameResult = (gPos.side == WHITE) ? 0.0f : 1.0f; break; }
+
+            if (pvLine[0].from == NO_SQ || !MakeMove(&gPos, pvLine[0])) break;
+            if (IsRepetition(&gPos) || gPos.fiftyMove >= 100) break;
+        }
+
+        // 3. Write positions with (FEN | Search Score | Game Result)
+        for (int i = 0; i < posCount; ++i) {
+            fprintf(f, "%s | %d | %.1f\n", gameFens[i], gameScores[i], gameResult);
+        }
+        fflush(f);
+
+        if (g % 50 == 0 || g == numGames) {
+            printf("Generated %d / %d games...\n", g, numGames);
+        }
+    }
+
+    fclose(f);
+    printf("Data generation complete! Saved to %s\n", outFile);
+}
