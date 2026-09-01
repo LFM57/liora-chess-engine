@@ -457,6 +457,8 @@ void ResetBoard(Board *pos) {
     pos->hisPly = 0;
     pos->castlePerm = 0;
     pos->posKey = 0ULL;
+    pos->accumStack[0].computed[WHITE] = 0;
+    pos->accumStack[0].computed[BLACK] = 0;
 }
 
 U64 GeneratePosKey(const Board *pos) {
@@ -540,6 +542,8 @@ void ParseFen(char *fen, Board *pos) {
     pos->pawns[BOTH] = pos->pawns[WHITE] | pos->pawns[BLACK];
     pos->posKey = GeneratePosKey(pos);
     InitEval(pos);
+    RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, WHITE);
+    RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, BLACK);
 }
 
 // Move Gen Helpers
@@ -985,6 +989,20 @@ int MakeMove(Board *pos, Move move) {
         if(to == C1) { pos->pieces[R] &= ClearMask[A1]; pos->pieces[R] |= SetMask[D1]; pos->board[A1] = EMPTY; pos->board[D1] = R; }
         if(to == G8) { pos->pieces[r] &= ClearMask[H8]; pos->pieces[r] |= SetMask[F8]; pos->board[H8] = EMPTY; pos->board[F8] = r; }
         if(to == C8) { pos->pieces[r] &= ClearMask[A8]; pos->pieces[r] |= SetMask[D8]; pos->board[A8] = EMPTY; pos->board[D8] = r; }
+    }
+    
+    // Update NNUE Accumulator for the new ply
+    int capSq = to;
+    if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
+    UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
+                          pType, from, to, move.capture, capSq, move.promoted);
+
+    // If castling, also update the moved Rook in the accumulator
+    if (move.move_type == 2) {
+        if (to == G1) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, R, H1, F1, EMPTY, NO_SQ, EMPTY);
+        else if (to == C1) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, R, A1, D1, EMPTY, NO_SQ, EMPTY);
+        else if (to == G8) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, r, H8, F8, EMPTY, NO_SQ, EMPTY);
+        else if (to == C8) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, r, A8, D8, EMPTY, NO_SQ, EMPTY);
     }
     
     // Update Castling Perms

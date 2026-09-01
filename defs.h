@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
+#include "nnue.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -79,6 +80,7 @@ typedef struct {
     int historyEvalMG[1024];
     int historyEvalEG[1024];
     int historyPhase[1024];
+    Accumulator accumStack[1024];
 } Board;
 
 typedef struct {
@@ -101,6 +103,7 @@ extern int PvArray[MAX_DEPTH];
 extern int History[2][64][64];
 extern Move KillerMoves[MAX_DEPTH][2];
 extern TT TranspositionTable;
+extern int NNUE_Loaded;
 extern U64 SetMask[64];
 extern U64 ClearMask[64];
 extern U64 RankMask[8];

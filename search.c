@@ -25,6 +25,10 @@ void InitMvvLva() {
 }
 
 int Evaluate(const Board *pos) {
+    if (NNUE_Loaded) {
+        return EvaluateNNUE(pos);
+    }
+
     int mg = pos->eval_mg;
     int eg = pos->eval_eg;
 

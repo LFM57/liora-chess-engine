@@ -88,12 +88,24 @@ void ParseOption(char *line) {
             strncpy(BookPath, ptr, 511);
         }
     }
+    // Parse: setoption name EvalFile value <path>
+    else if(strstr(line, "name EvalFile") || strstr(line, "name evalfile")) {
+        char *ptr = strstr(line, "value");
+        if(ptr) {
+            ptr += 6;
+            while(*ptr == ' ') ptr++;
+            char *end = ptr + strlen(ptr) - 1;
+            while(end > ptr && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
+            InitNNUE(ptr);
+        }
+    }
 }
 
 char BookPath[512] = "";
 
 int main() {
     AllInit();
+    InitNNUE("liora.nnue"); // Attempts to load liora.nnue from working directory
     InitTT(64);
     
     extern void InitMvvLva();
@@ -113,6 +125,7 @@ int main() {
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max 4096\n");
             printf("option name BookPath type string default <empty>\n");
+            printf("option name EvalFile type string default liora.nnue\n");
             printf("uciok\n");
         } else if(!strncmp(line, "setoption", 9)) {
             ParseOption(line);
