@@ -93,15 +93,19 @@ void RefreshAccumulator(Accumulator *acc, const struct Board *pos, int side) {
 void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const struct Board *pos,
                            int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece) {
     for (int side = 0; side <= 1; ++side) {
-        int ksq = (side == WHITE) ? pos->king_sq[WHITE] : pos->king_sq[BLACK];
-
-        if ((side == WHITE && movedPiece == K) || (side == BLACK && movedPiece == k)) {
+        // FIX 1: If parent accumulator was not computed, child CANNOT be updated incrementally!
+        // FIX 2: If this side's king moved, this perspective MUST be refreshed from scratch later.
+        if (!prevAcc->computed[side] || (side == WHITE && movedPiece == K) || (side == BLACK && movedPiece == k)) {
             nextAcc->computed[side] = 0;
             continue;
         }
 
-        // Copy parent accumulator
-        memcpy(nextAcc->accumulation[side], prevAcc->accumulation[side], NNUE_L1 * sizeof(int16_t));
+        // FIX 3: Prevent undefined behavior when nextAcc and prevAcc point to the same memory
+        if (nextAcc != prevAcc) {
+            memcpy(nextAcc->accumulation[side], prevAcc->accumulation[side], NNUE_L1 * sizeof(int16_t));
+        }
+
+        int ksq = (side == WHITE) ? pos->king_sq[WHITE] : pos->king_sq[BLACK];
 
         int subFeat = GetFeatureIndex(ksq, movedPiece, from, side);
         int addFeat = GetFeatureIndex(ksq, (promPiece != EMPTY) ? promPiece : movedPiece, to, side);
@@ -221,4 +225,35 @@ void InitNNUE(const char *filename) {
     for (int i = 0; i < 2 * NNUE_L1; ++i) OutputWeights[i] = 0;
     OutputBias = 0;
     NNUE_Loaded = 0;
+}
+
+// Updates the moved Rook in the opponent's accumulator during castling
+void UpdateAccumulatorCastlingRook(Accumulator *acc, const struct Board *pos, int castlingSide, int rFrom, int rTo) {
+    int opp = castlingSide ^ 1;
+    if (!acc->computed[opp]) return;
+
+    int oppKsq = (opp == WHITE) ? pos->king_sq[WHITE] : pos->king_sq[BLACK];
+    int rPiece = (castlingSide == WHITE) ? R : r;
+    int subFeat = GetFeatureIndex(oppKsq, rPiece, rFrom, opp);
+    int addFeat = GetFeatureIndex(oppKsq, rPiece, rTo, opp);
+
+#if defined(__AVX2__)
+    for (int i = 0; i < NNUE_L1; i += 16) {
+        __m256i acc_vec = _mm256_loadu_si256((__m256i*)&acc->accumulation[opp][i]);
+        if (subFeat >= 0) {
+            __m256i w_sub = _mm256_loadu_si256((__m256i*)&FeatureWeights[subFeat * NNUE_L1 + i]);
+            acc_vec = _mm256_sub_epi16(acc_vec, w_sub);
+        }
+        if (addFeat >= 0) {
+            __m256i w_add = _mm256_loadu_si256((__m256i*)&FeatureWeights[addFeat * NNUE_L1 + i]);
+            acc_vec = _mm256_add_epi16(acc_vec, w_add);
+        }
+        _mm256_storeu_si256((__m256i*)&acc->accumulation[opp][i], acc_vec);
+    }
+#else
+    for (int i = 0; i < NNUE_L1; ++i) {
+        if (subFeat >= 0) acc->accumulation[opp][i] -= FeatureWeights[subFeat * NNUE_L1 + i];
+        if (addFeat >= 0) acc->accumulation[opp][i] += FeatureWeights[addFeat * NNUE_L1 + i];
+    }
+#endif
 }

@@ -1,5 +1,9 @@
 #include "defs.h"
 
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 Board pos;
 
 void ParseGo(char *line) {
@@ -105,6 +109,14 @@ char BookPath[512] = "";
 
 int main() {
     AllInit();
+
+    // Ensure parallel instances do not generate identical random seeds
+#ifdef _WIN32
+    srand((unsigned int)(time(NULL) ^ GetCurrentProcessId()));
+#else
+    srand((unsigned int)(time(NULL) ^ (getpid() << 16)));
+#endif
+
     InitNNUE("liora.nnue"); // Attempts to load liora.nnue from working directory
     InitTT(64);
     
@@ -140,10 +152,15 @@ int main() {
             ParseGo(line);
         } else if(!strncmp(line, "datagen", 7)) {
             int games = 1000;
-            int plies = 200;
+            int depth = 12;
+            char outFile[256] = "dataset.txt";
             char *p = line + 7;
-            if (*p) games = atoi(p);
-            RunDataGen(games, plies, "dataset.txt");
+            while (*p == ' ') p++;
+            if (*p) {
+                // Syntax: datagen [games] [depth] [filename]
+                sscanf(p, "%d %d %255s", &games, &depth, outFile);
+            }
+            RunDataGen(games, 200, depth, outFile);
         } else if(!strncmp(line, "quit", 4)) {
             break;
         }

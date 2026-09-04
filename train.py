@@ -3,7 +3,7 @@
 train.py - PyTorch Trainer for Liora NNUE
 Architecture: HalfKP (40960 -> 256)x2 -> 1
 Reads: dataset.txt (FEN | Score | Result)
-Outputs: liora.nnue
+Outputs: liora_[epoch].nnue
 """
 
 import sys
@@ -25,10 +25,16 @@ PIECE_MAP_B = {'p': 0, 'n': 1, 'b': 2, 'r': 3, 'q': 4, 'P': 5, 'N': 6, 'B': 7, '
 
 def fen_to_features(fen):
     parts = fen.strip().split()
+    if len(parts) < 2:
+        return [], [], 0
+        
     board_str = parts[0]
     side = 0 if parts[1] == 'w' else 1
     
     rows = board_str.split('/')
+    if len(rows) != 8:
+        return [], [], side
+        
     board = [None] * 64
     w_ksq, b_ksq = -1, -1
     
@@ -44,12 +50,15 @@ def fen_to_features(fen):
                 if ch == 'k': b_ksq = sq
                 f += 1
                 
+    if w_ksq == -1 or b_ksq == -1:
+        return [], [], side
+
     w_feats = []
     b_feats = []
     
     for sq in range(64):
         p = board[sq]
-        if p and p not in ['K', 'k']:
+        if p and p not in ['K', 'k'] and p in PIECE_MAP_W:
             # White perspective
             p_idx_w = PIECE_MAP_W[p]
             w_feats.append(w_ksq * 640 + p_idx_w * 64 + sq)
@@ -61,7 +70,7 @@ def fen_to_features(fen):
     return w_feats, b_feats, side
 
 class ChessDataset(Dataset):
-    def __init__(self, filename, max_samples=500000):
+    def __init__(self, filename, max_samples=None):
         self.samples = []
         print(f"Loading {filename}...")
         with open(filename, 'r') as f:
@@ -69,16 +78,32 @@ class ChessDataset(Dataset):
                 parts = line.strip().split('|')
                 if len(parts) != 3: continue
                 fen = parts[0].strip()
-                score = float(parts[1].strip())
-                result = float(parts[2].strip())
+                try:
+                    score = float(parts[1].strip())
+                    result = float(parts[2].strip())
+                except ValueError:
+                    continue
                 
-                # Target: Blend 80% search evaluation with 20% actual game result
-                # Sigmoid maps centipawns to [0, 1] winning probability
+                parts_fen = fen.split()
+                if 'K' not in parts_fen[0] or 'k' not in parts_fen[0]:
+                    continue
+
+                # Parse side to move ('w' = 0, 'b' = 1)
+                side_to_move = 0 if len(parts_fen) > 1 and parts_fen[1] == 'w' else 1
+
+                # Target: Blend 80% search evaluation with 20% actual game result (from White's perspective)
                 eval_prob = 1.0 / (1.0 + np.exp(-score / 400.0))
                 target = 0.8 * eval_prob + 0.2 * result
+
+                # CRITICAL FIX: The neural network evaluates from the perspective of the side to move ('us').
+                # Because score and result are from White's perspective, invert target if Black is to move!
+                if side_to_move == 1:
+                    target = 1.0 - target
                 
                 self.samples.append((fen, target))
-                if len(self.samples) >= max_samples: break
+                if max_samples and len(self.samples) >= max_samples: 
+                    break
+                    
         print(f"Loaded {len(self.samples)} positions.")
 
     def __len__(self):
@@ -91,20 +116,19 @@ class ChessDataset(Dataset):
 
 def collate_fn(batch):
     batch_size = len(batch)
-    w_indices = []
-    b_indices = []
+    w_tensor = torch.zeros((batch_size, NNUE_INPUTS), dtype=torch.float32)
+    b_tensor = torch.zeros((batch_size, NNUE_INPUTS), dtype=torch.float32)
     sides = []
     targets = []
     
     for i, (w_f, b_f, side, target) in enumerate(batch):
-        for f in w_f: w_indices.append((i, f))
-        for f in b_f: b_indices.append((i, f))
+        if w_f:
+            w_tensor[i, w_f] = 1.0
+        if b_f:
+            b_tensor[i, b_f] = 1.0
         sides.append(side)
         targets.append(target)
         
-    w_tensor = torch.sparse_coo_tensor(torch.tensor(w_indices).t(), torch.ones(len(w_indices)), (batch_size, NNUE_INPUTS)).to_dense()
-    b_tensor = torch.sparse_coo_tensor(torch.tensor(b_indices).t(), torch.ones(len(b_indices)), (batch_size, NNUE_INPUTS)).to_dense()
-    
     return w_tensor, b_tensor, torch.tensor(sides, dtype=torch.long), torch.tensor(targets, dtype=torch.float32)
 
 class LioraNNUE(nn.Module):
@@ -132,19 +156,24 @@ def export_to_nnue(model, filename="liora.nnue"):
     out_w = model.out.weight.data.cpu().numpy() # [1, 512]
     out_b = model.out.bias.data.cpu().numpy()   # [1]
 
-    # Quantize to int16 / int32
-    # Scale: Activations [0, 1] -> [0, 127]
-    q_ft_w = np.clip(ft_w.T * 127.0, -32767, 32767).astype(np.int16)
-    q_ft_b = np.clip(ft_b * 127.0, -32767, 32767).astype(np.int16)
-    q_out_w = np.clip(out_w * 64.0, -32767, 32767).astype(np.int16)
-    q_out_b = np.int32(out_b[0] * 64.0 * SCALE)
+    # Quantization scales
+    FV_SCALE = 127.0  # Feature transformer activations [0, 1] -> [0, 127]
+    OUT_SCALE = 64.0  # Output weights scale
+
+    q_ft_w = np.clip(np.round(ft_w.T * FV_SCALE), -32767, 32767).astype(np.int16)
+    q_ft_b = np.clip(np.round(ft_b * FV_SCALE), -32767, 32767).astype(np.int16)
+    q_out_w = np.clip(np.round(out_w * OUT_SCALE), -32767, 32767).astype(np.int16)
+    
+    # CRITICAL FIX: The dot product in C is (clipped * out_w) = (127 * out_w_float * 64) = 8128 * score.
+    # Therefore, out_b MUST be scaled by the exact same combined factor (127 * 64 = 8128), NOT (64 * 16)!
+    q_out_b = np.int32(np.round(out_b[0] * FV_SCALE * OUT_SCALE))
 
     with open(filename, "wb") as f:
         f.write(q_ft_b.tobytes())
         f.write(q_ft_w.tobytes())
         f.write(struct.pack("<i", q_out_b))
         f.write(q_out_w.tobytes())
-    print("Done! Net is ready for Liora.")
+    print(f"Done! {filename} is ready.")
 
 def main():
     if not os.path.exists("dataset.txt"):
@@ -154,8 +183,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
 
-    dataset = ChessDataset("dataset.txt")
-    loader = DataLoader(dataset, batch_size=256, shuffle=True, collate_fn=collate_fn)
+    # Charge toutes les positions sans limite
+    dataset = ChessDataset("dataset.txt", max_samples=None)
+    loader = DataLoader(dataset, batch_size=256, shuffle=True, collate_fn=collate_fn, num_workers=2, pin_memory=True)
 
     model = LioraNNUE().to(device)
     optimizer = optim.Adam(model.parameters(), lr=0.001)
@@ -163,21 +193,29 @@ def main():
 
     epochs = 5
     for epoch in range(1, epochs + 1):
-        total_loss = 0
+        total_loss = 0.0
         model.train()
         for w_d, b_d, sides, targets in loader:
-            w_d, b_d, sides, targets = w_d.to(device), b_d.to(device), sides.to(device), targets.to(device)
+            w_d = w_d.to(device, non_blocking=True)
+            b_d = b_d.to(device, non_blocking=True)
+            sides = sides.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
             
             optimizer.zero_grad()
-            preds = model(w_d, b_d, sides).squeeze()
+            preds = model(w_d, b_d, sides).squeeze(-1)
             loss = criterion(preds, targets)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
 
-        print(f"Epoch {epoch}/{epochs} - Loss: {total_loss / len(loader):.5f}")
+        avg_loss = total_loss / len(loader)
+        print(f"Epoch {epoch}/{epochs} - Loss: {avg_loss:.5f}")
 
-    export_to_nnue(model, "liora.nnue")
+        # Sauvegarde un nouveau fichier pour chaque epoch (ex: liora_1.nnue, liora_2.nnue, etc.)
+        epoch_filename = f"liora_{epoch}.nnue"
+        export_to_nnue(model, epoch_filename)
+
+    print("\nTraining completed successfully! All checkpoints exported.")
 
 if __name__ == "__main__":
     main()

@@ -997,12 +997,14 @@ int MakeMove(Board *pos, Move move) {
     UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
                           pType, from, to, move.capture, capSq, move.promoted);
 
-    // If castling, also update the moved Rook in the accumulator
+    // If castling, update the moved Rook in the opponent's accumulator
     if (move.move_type == 2) {
-        if (to == G1) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, R, H1, F1, EMPTY, NO_SQ, EMPTY);
-        else if (to == C1) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, R, A1, D1, EMPTY, NO_SQ, EMPTY);
-        else if (to == G8) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, r, H8, F8, EMPTY, NO_SQ, EMPTY);
-        else if (to == C8) UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly], pos, r, A8, D8, EMPTY, NO_SQ, EMPTY);
+        int rFrom = NO_SQ, rTo = NO_SQ;
+        if (to == G1)      { rFrom = H1; rTo = F1; }
+        else if (to == C1) { rFrom = A1; rTo = D1; }
+        else if (to == G8) { rFrom = H8; rTo = F8; }
+        else if (to == C8) { rFrom = A8; rTo = D8; }
+        UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
     }
     
     // Update Castling Perms

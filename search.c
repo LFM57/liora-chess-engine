@@ -275,18 +275,18 @@ TTEntry* ProbeTT(U64 key) {
 }
 
 // Search
-long GetTimeMs() {
+long long GetTimeMs() {
     #ifdef _WIN32
-    return GetTickCount();
+    return (long long)GetTickCount();
     #else
     struct timeval tv;
     gettimeofday(&tv, NULL);
-    return (tv.tv_sec * 1000) + (tv.tv_usec / 1000);
+    return ((long long)tv.tv_sec * 1000) + (tv.tv_usec / 1000);
     #endif
 }
 
-long StartTime;
-long StopTime;
+long long StartTime;
+long long StopTime;
 int StopSearch;
 int Nodes;
 
@@ -853,29 +853,32 @@ void GetBoardFen(const Board *pos, char *fen) {
     *ptr = '\0';
 }
 
-// Runs self-play data generation
-void RunDataGen(int numGames, int maxPlies, const char *outFile) {
+// Runs self-play data generation with Iterative Deepening
+void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile) {
     FILE *f = fopen(outFile, "a");
     if (!f) {
         printf("Error: Could not open output file %s\n", outFile);
         return;
     }
 
-    printf("Starting self-play generation of %d games...\n", numGames);
+    printf("Starting self-play generation: %d games at Depth %d -> File: %s\n", numGames, searchDepth, outFile);
 
     Board gPos;
-    char fenBuffer[256];
+    StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
 
     for (int g = 1; g <= numGames; ++g) {
+        // Reset Search State between games
+        ClearTT();
+        memset(KillerMoves, 0, sizeof(KillerMoves));
+
         ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &gPos);
 
-        // Store positions of the game in memory to assign the final outcome at the end
         char gameFens[512][128];
         int gameScores[512];
         int posCount = 0;
 
-        // 1. Play 8 random opening half-moves for book diversity
-        int randomPlies = 6 + (rand() % 4);
+        // 1. Opening Diversity: 6 to 10 random half-moves (3 to 5 full moves)
+        int randomPlies = 6 + (rand() % 5);
         for (int r = 0; r < randomPlies; ++r) {
             Move mList[MAX_MOVES]; int count = 0;
             GenerateMoves(&gPos, mList, &count);
@@ -890,40 +893,68 @@ void RunDataGen(int numGames, int maxPlies, const char *outFile) {
             MakeMove(&gPos, legal[rand() % lCount]);
         }
 
-        // 2. Play game using search
+        // 2. Play game using iterative deepening search
         float gameResult = 0.5f; // Draw default
         for (int ply = 0; ply < maxPlies; ++ply) {
             Move pvLine[MAX_DEPTH];
-            pvLine[0].from = NO_SQ;
-            StopSearch = 0;
-            Nodes = 0;
-            gPos.ply = 0;
+            Move bestMove = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
+            int score = 0;
 
-            int score = Negamax(&gPos, 5, -INF, INF, 1, pvLine);
+            // --- ITERATIVE DEEPENING (Depth 1 to searchDepth) ---
+            // Essential for move ordering, TT population, and performance
+            for (int d = 1; d <= searchDepth; ++d) {
+                pvLine[0].from = NO_SQ;
+                StopSearch = 0;
+                gPos.ply = 0;
+                score = Negamax(&gPos, d, -INF, INF, 1, pvLine);
+                if (pvLine[0].from != NO_SQ) {
+                    bestMove = pvLine[0];
+                }
+            }
 
-            // Record quiet positions (skip if in check or during extreme captures)
             int inCheck = SqAttacked(gPos.king_sq[gPos.side], gPos.side ^ 1, &gPos);
-            if (!inCheck && posCount < 500 && abs(score) < 3000) {
+
+            // Record quiet positions (avoid tactical noise/checks during training)
+            if (!inCheck && posCount < 500 && abs(score) < 4000) {
                 GetBoardFen(&gPos, gameFens[posCount]);
+                // Save score normalized from White's perspective
                 gameScores[posCount] = (gPos.side == WHITE) ? score : -score;
                 posCount++;
             }
 
-            if (score > MATE_SCORE - 100) { gameResult = (gPos.side == WHITE) ? 1.0f : 0.0f; break; }
-            if (score < -MATE_SCORE + 100) { gameResult = (gPos.side == WHITE) ? 0.0f : 1.0f; break; }
+            // Early adjudication
+            if (score > MATE_SCORE - 100) { 
+                gameResult = (gPos.side == WHITE) ? 1.0f : 0.0f; 
+                break; 
+            }
+            if (score < -MATE_SCORE + 100) { 
+                gameResult = (gPos.side == WHITE) ? 0.0f : 1.0f; 
+                break; 
+            }
 
-            if (pvLine[0].from == NO_SQ || !MakeMove(&gPos, pvLine[0])) break;
-            if (IsRepetition(&gPos) || gPos.fiftyMove >= 100) break;
+            // Apply best move found
+            if (bestMove.from == NO_SQ || !MakeMove(&gPos, bestMove)) {
+                if (inCheck) {
+                    gameResult = (gPos.side == WHITE) ? 0.0f : 1.0f;
+                }
+                break;
+            }
+
+            // Fifty-move rule or 3-fold repetition
+            if (IsRepetition(&gPos) || gPos.fiftyMove >= 100) {
+                gameResult = 0.5f;
+                break;
+            }
         }
 
-        // 3. Write positions with (FEN | Search Score | Game Result)
+        // 3. Write positions from this game
         for (int i = 0; i < posCount; ++i) {
             fprintf(f, "%s | %d | %.1f\n", gameFens[i], gameScores[i], gameResult);
         }
         fflush(f);
 
-        if (g % 50 == 0 || g == numGames) {
-            printf("Generated %d / %d games...\n", g, numGames);
+        if (g % 10 == 0 || g == numGames) {
+            printf("Generated %d / %d games (%d positions in file)...\n", g, numGames, posCount);
         }
     }
 

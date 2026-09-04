@@ -18,7 +18,7 @@
 typedef unsigned long long U64;
 
 // Constants
-#define NAME "Liora v10.1 F"
+#define NAME "Liora v10.3 C"
 #define AUTHOR "LFM"
 #define MAX_MOVES 256
 #define MAX_DEPTH 64
@@ -148,7 +148,7 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
 int Evaluate(const Board *pos);
 void InitTT(int mb);
 void ClearTT();
-long GetTimeMs();
+long long GetTimeMs();
 
 // polyglot
 extern char BookPath[512];
@@ -160,6 +160,6 @@ int GetFile(int sq);
 int GetPieceAt(const Board *pos, int sq, int side);
 
 // Datagen
-void RunDataGen(int numGames, int maxPlies, const char *outFile);
+void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile);
 
 #endif
