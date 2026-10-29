@@ -88,23 +88,6 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c polyglot.c search.c -lm -o liora.exe
 | `BookPath` | `string` | `<empty>` | Filepath to an external Polyglot opening book (`.bin`). |
 | `EvalFile` | `string` | `liora.nnue` | Path to the neural network file. Falls back to HCE if missing. |
 
----
-
-## Benchmark & Tournament Results
-
-### Liora v11.0 F vs. Liora v10.4 C (Pure HCE, 8moves_v3 book, paired openings)
-
-| Time Control | Games | Score (+ / = / -) | Win Rate | Elo Gain | LOS |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Ultra-Bullet (15s + 0.1s)** | 622 | 431 - 116 - 75 | **78.6%** | **+226.2 ± 28.4 Elo** | **100.0%** |
-| **Bullet (60s + 0s)** | 515 | 360 - 104 - 51 | **80.0%** | **+240.8 ± 31.2 Elo** | **100.0%** |
-
----
-
-## Author
-
-* **LFM** (Louis Simonet)
-
 ## License
 
 This project is licensed under the MIT License.
