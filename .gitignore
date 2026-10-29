@@ -18,6 +18,7 @@ liora.nnue
 # Notes and Internal Docs
 PROBLEMS.md
 SKILL.md
+.agents/
 
 # Python
 __pycache__/
