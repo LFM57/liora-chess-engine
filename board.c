@@ -548,9 +548,6 @@ void ParseFen(char *fen, Board *pos) {
 
 // Move Gen Helpers
 int SqAttacked(int sq, int side, const Board *pos) {
-    U64 occ = pos->pawns[BOTH];
-    for(int i=0; i<12; ++i) occ |= pos->pieces[i];
-
     // Pawn
     if(side == WHITE) {
         if(PawnAttacks[BLACK][sq] & pos->pieces[P]) return 1;
@@ -566,10 +563,15 @@ int SqAttacked(int sq, int side, const Board *pos) {
     
     // Sliders : Tours et Dames
     U64 rq = pos->pieces[side == WHITE ? R : r] | pos->pieces[side == WHITE ? Q : q];
-    if (rq && (GetRookAttacks(sq, occ) & rq)) return 1;
-    
     // Sliders : Fous et Dames
     U64 bq = pos->pieces[side == WHITE ? B : b] | pos->pieces[side == WHITE ? Q : q];
+
+    if (rq == 0 && bq == 0) return 0;
+
+    U64 occ = 0;
+    for(int i=0; i<12; ++i) occ |= pos->pieces[i];
+
+    if (rq && (GetRookAttacks(sq, occ) & rq)) return 1;
     if (bq && (GetBishopAttacks(sq, occ) & bq)) return 1;
     
     return 0;
@@ -997,22 +999,6 @@ int MakeMove(Board *pos, Move move) {
         if(to == C8) { pos->pieces[r] &= ClearMask[A8]; pos->pieces[r] |= SetMask[D8]; pos->board[A8] = EMPTY; pos->board[D8] = r; }
     }
     
-    // Update NNUE Accumulator for the new ply
-    int capSq = to;
-    if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
-    UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
-                          pType, from, to, move.capture, capSq, move.promoted);
-
-    // If castling, update the moved Rook in the opponent's accumulator
-    if (move.move_type == 2) {
-        int rFrom = NO_SQ, rTo = NO_SQ;
-        if (to == G1)      { rFrom = H1; rTo = F1; }
-        else if (to == C1) { rFrom = A1; rTo = D1; }
-        else if (to == G8) { rFrom = H8; rTo = F8; }
-        else if (to == C8) { rFrom = A8; rTo = D8; }
-        UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
-    }
-    
     // Update Castling Perms
     if(from == E1 || to == E1) pos->castlePerm &= ~(WKCA | WQCA);
     if(from == H1 || to == H1) pos->castlePerm &= ~WKCA;
@@ -1040,6 +1026,22 @@ int MakeMove(Board *pos, Move move) {
     if(SqAttacked(pos->king_sq[side == WHITE ? 0 : 1], pos->side, pos)) {
         TakeMove(pos, move);
         return 0;
+    }
+    
+    // Update NNUE Accumulator for the new ply (only on legal moves)
+    int capSq = to;
+    if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
+    UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
+                          pType, from, to, move.capture, capSq, move.promoted);
+
+    // If castling, update the moved Rook in the opponent's accumulator
+    if (move.move_type == 2) {
+        int rFrom = NO_SQ, rTo = NO_SQ;
+        if (to == G1)      { rFrom = H1; rTo = F1; }
+        else if (to == C1) { rFrom = A1; rTo = D1; }
+        else if (to == G8) { rFrom = H8; rTo = F8; }
+        else if (to == C8) { rFrom = A8; rTo = D8; }
+        UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
     }
     
     return 1;
