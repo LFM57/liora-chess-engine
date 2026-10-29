@@ -1,0 +1,33 @@
+# Binaries and build artifacts
+liora*
+*.exe
+*.o
+*.obj
+*.a
+*.so
+build/
+dist/
+
+# Engine Weights and Books
+liora.nnue
+*.nnue
+*.bin
+*.epd
+*.pgn
+
+# Notes and Internal Docs
+PROBLEMS.md
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
