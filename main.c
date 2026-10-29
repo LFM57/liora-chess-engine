@@ -159,7 +159,7 @@ int main() {
             ParseGo(line);
         } else if(!strncmp(line, "datagen", 7)) {
             int games = 1000;
-            int depth = 12;
+            int depth = 8;
             char outFile[256] = "dataset.txt";
             char *p = line + 7;
             while (*p == ' ') p++;

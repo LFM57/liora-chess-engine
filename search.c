@@ -322,11 +322,13 @@ long long StartTime;
 long long StopTime;
 int StopSearch;
 int Nodes;
+int MaxNodes = 0;
 
 void CheckTime() {
     // Vérifie le temps plus souvent (tous les 1024 noeuds au lieu de 2048)
     if((Nodes & 1023) == 0) {
         if(GetTimeMs() >= StopTime) StopSearch = 1;
+        if(MaxNodes > 0 && Nodes >= MaxNodes) StopSearch = 1;
     }
 }
 
@@ -1101,10 +1103,14 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
     Board gPos;
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
+    ClearTT(); // Clear TT once before data generation starts
 
     for (int g = 1; g <= numGames; ++g) {
-        // Reset Search State between games
-        ClearTT();
+        // Increment TT age between games instead of zeroing memory every game
+        TTAge++;
+        if (TTAge == 0) {
+            ClearTT();
+        }
         memset(KillerMoves, 0, sizeof(KillerMoves));
 
         ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &gPos);
@@ -1138,6 +1144,7 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
             // --- ITERATIVE DEEPENING (Depth 1 to searchDepth) ---
             // Essential for move ordering, TT population, and performance
+            Nodes = 0;
             for (int d = 1; d <= searchDepth; ++d) {
                 pvLine[0].from = NO_SQ;
                 StopSearch = 0;
@@ -1146,12 +1153,15 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
                 if (pvLine[0].from != NO_SQ) {
                     bestMove = pvLine[0];
                 }
+                if (Nodes >= 5000) break;
             }
 
             int inCheck = SqAttacked(gPos.king_sq[gPos.side], gPos.side ^ 1, &gPos);
 
             // Record quiet positions (avoid tactical noise/checks during training)
-            if (!inCheck && posCount < 500 && abs(score) < 4000) {
+            if (!inCheck && ply >= 10 && bestMove.from != NO_SQ &&
+                bestMove.capture == EMPTY && bestMove.promoted == EMPTY &&
+                abs(score) < 3000 && posCount < 500) {
                 GetBoardFen(&gPos, gameFens[posCount]);
                 // Save score normalized from White's perspective
                 gameScores[posCount] = (gPos.side == WHITE) ? score : -score;
