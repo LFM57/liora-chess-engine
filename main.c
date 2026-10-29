@@ -58,8 +58,10 @@ void ParsePosition(char *line) {
             GenerateMoves(&pos, moves, &count);
             for(int i=0; i<count; ++i) {
                 if(moves[i].from == from && moves[i].to == to && moves[i].promoted == prom) {
-                    MakeMove(&pos, moves[i]);
-                    break;
+                    // FIX: Only break if MakeMove successfully applies the legal move
+                    if (MakeMove(&pos, moves[i])) {
+                        break;
+                    }
                 }
             }
             
@@ -101,6 +103,10 @@ void ParseOption(char *line) {
             char *end = ptr + strlen(ptr) - 1;
             while(end > ptr && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
             InitNNUE(ptr);
+            pos.accumStack[pos.hisPly].computed[WHITE] = 0;
+            pos.accumStack[pos.hisPly].computed[BLACK] = 0;
+            pos.accumStack[0].computed[WHITE] = 0;
+            pos.accumStack[0].computed[BLACK] = 0;
         }
     }
 }

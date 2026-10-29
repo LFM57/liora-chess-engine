@@ -253,16 +253,22 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
         }
     }
     
+    int sameKey = (TranspositionTable.entries[index].key == key);
+
     TranspositionTable.entries[index].key = key;
     TranspositionTable.entries[index].depth = depth;
     TranspositionTable.entries[index].score = score;
     TranspositionTable.entries[index].flag = flag;
     
-    // Préserver le coup précédent s'il n'y a pas de meilleur coup légal sur ce pli
+    // FIX: Only preserve the existing TT move if writing to the SAME position
     if (move.from != NO_SQ) {
         TranspositionTable.entries[index].move_from = move.from;
         TranspositionTable.entries[index].move_to = move.to;
         TranspositionTable.entries[index].move_prom = move.promoted;
+    } else if (!sameKey) {
+        TranspositionTable.entries[index].move_from = NO_SQ;
+        TranspositionTable.entries[index].move_to = NO_SQ;
+        TranspositionTable.entries[index].move_prom = EMPTY;
     }
 }
 
@@ -448,6 +454,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
             pos->posKey ^= EnPasKeys[pos->enPas];
             pos->enPas = NO_SQ;
         }
+        
+        // FIX: Copy accumulator state to new hisPly so NNUE never reads uninitialized memory
+        pos->accumStack[pos->hisPly] = pos->accumStack[pos->hisPly - 1];
         
         Move nullPv[MAX_DEPTH]; // Dummy
         nullPv[0].from = NO_SQ;
@@ -722,11 +731,20 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         if(StopSearch) break;
         previousScore = score;
         
-        // Save best move from PV using instant Make/Take without 37KB stack copies
+        // FIX: Verify pvLine[0] strictly exists in the legal move list before storing
         if(pvLine[0].from != NO_SQ) {
-            if (MakeMove(pos, pvLine[0])) {
-                TakeMove(pos, pvLine[0]);
-                bestMoveSoFar = pvLine[0];
+            Move legals[MAX_MOVES]; int lCount = 0;
+            GenerateMoves(pos, legals, &lCount);
+            for(int m = 0; m < lCount; ++m) {
+                if(legals[m].from == pvLine[0].from && 
+                   legals[m].to == pvLine[0].to && 
+                   legals[m].promoted == pvLine[0].promoted) {
+                    if (MakeMove(pos, legals[m])) {
+                        TakeMove(pos, legals[m]);
+                        bestMoveSoFar = legals[m];
+                    }
+                    break;
+                }
             }
         }
         

@@ -205,11 +205,18 @@ int LoadNNUE(const char *filename) {
 
     size_t r = 0;
     r += fread(FeatureBiases, sizeof(int16_t), NNUE_L1, f);
-    r += fread(FeatureWeights, sizeof(int16_t), NNUE_INPUTS * NNUE_L1, f);
+    r += fread(FeatureWeights, sizeof(int16_t), (size_t)NNUE_INPUTS * NNUE_L1, f);
     r += fread(&OutputBias, sizeof(int32_t), 1, f);
     r += fread(OutputWeights, sizeof(int16_t), 2 * NNUE_L1, f);
 
     fclose(f);
+
+    size_t expected = (size_t)NNUE_L1 + (size_t)NNUE_INPUTS * NNUE_L1 + 1 + 2 * (size_t)NNUE_L1;
+    if (r != expected) {
+        NNUE_Loaded = 0;
+        return 0;
+    }
+
     NNUE_Loaded = 1;
     return 1;
 }
@@ -219,6 +226,9 @@ void InitNNUE(const char *filename) {
         printf("info string NNUE net loaded successfully from %s\n", filename);
         return;
     }
+
+    printf("info string Warning: Failed to load NNUE net from %s, falling back to HCE\n",
+           (filename && filename[0] != '\0') ? filename : "<empty>");
 
     memset(FeatureWeights, 0, sizeof(FeatureWeights));
     for (int i = 0; i < NNUE_L1; ++i) FeatureBiases[i] = 0;

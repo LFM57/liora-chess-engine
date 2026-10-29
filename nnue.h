@@ -5,7 +5,7 @@
 
 #define NNUE_INPUTS 40960 // 64 king squares * 10 piece types * 64 piece squares
 #define NNUE_L1 256       // 256 neurons per perspective
-#define NNUE_SCALE 51     // (FV_SCALE * OUT_SCALE) / (400.0 / 2.5) = 8128 / 160 ≈ 51
+#define NNUE_SCALE 1625   // (127.0 * 2048.0) / 160.0 ≈ 1625
 
 // Accumulator storing the first layer outputs for both White and Black perspectives
 typedef struct {

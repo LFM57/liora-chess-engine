@@ -590,9 +590,12 @@ void GenerateMoves(const Board *pos, Move *moveList, int *moveCount) {
     int side = pos->side;
     int enemy = (side == WHITE) ? BLACK : WHITE;
     
-    U64 myPieces = 0, allPieces = 0, occ = 0;
-    for(int i=0; i<6; ++i) myPieces |= pos->pieces[side == WHITE ? i : i+6];
-    for(int i=0; i<12; ++i) allPieces |= pos->pieces[i];
+    U64 myPieces = 0, enemyPieces = 0, allPieces = 0, occ = 0;
+    for(int i=0; i<6; ++i) {
+        myPieces    |= pos->pieces[side == WHITE ? i : i+6];
+        enemyPieces |= pos->pieces[side == WHITE ? i+6 : i];
+    }
+    allPieces = myPieces | enemyPieces;
     occ = allPieces;
     
     // Pawns
@@ -640,9 +643,9 @@ void GenerateMoves(const Board *pos, Move *moveList, int *moveCount) {
             if(abs(toFile - c) > 1) continue;
             
             int captured = EMPTY;
-            // Normal Capture (Ultra Rapide)
-            if (occ & SetMask[to]) {
-                captured = GetPieceAt(pos, to, enemy);
+            // FIX: Only capture squares occupied by enemy pieces (never friendly pieces)
+            if (enemyPieces & SetMask[to]) {
+                captured = pos->board[to];
             }
             
             if(captured != EMPTY) {
@@ -882,6 +885,16 @@ void GenerateCaptures(const Board *pos, Move *moveList, int *moveCount) {
 int MakeMove(Board *pos, Move move) {
     if(pos->hisPly >= 1024) return 0;
     
+    int from = move.from;
+    int to = move.to;
+    int side = pos->side;
+    int pType = pos->board[from];
+    
+    // FIX: Verify piece exists and strictly belongs to the side to move
+    if(pType == EMPTY) return 0;
+    if(side == WHITE && pType >= 6) return 0;
+    if(side == BLACK && pType < 6) return 0;
+
     // Preserve history
     pos->historyPosKey[pos->hisPly] = pos->posKey;
     pos->historyMove[pos->hisPly] = (move.from) | (move.to << 6);
@@ -894,13 +907,6 @@ int MakeMove(Board *pos, Move move) {
     
     pos->ply++;
     pos->hisPly++;
-    
-    int from = move.from;
-    int to = move.to;
-    int side = pos->side;
-    int pType = pos->board[from];
-    
-    if(pType == EMPTY) return 0;
     
     // Remove old en-passant and castling keys from hash
     if(pos->enPas != NO_SQ) pos->posKey ^= EnPasKeys[pos->enPas];
