@@ -92,10 +92,12 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c polyglot.c search.c -lm -o liora.exe
 
 ## Benchmark & Tournament Results
 
-### Liora v11.0 F vs. Liora v10.4 C (Pure HCE, 8moves_v3 book)
+### Liora v11.0 F vs. Liora v10.4 C (Pure HCE, 8moves_v3 book, paired openings)
 
-* **Ultra-Bullet (15s + 0.1s)**: **+226.2 ± 28.4 Elo** (Score: 78.6% across 622 games)
-* **Bullet (60s + 0s)**: High-margin Elo gain (78.8% win rate after 300 games)
+| Time Control | Games | Score (+ / = / -) | Win Rate | Elo Gain | LOS |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| **Ultra-Bullet (15s + 0.1s)** | 622 | 431 - 116 - 75 | **78.6%** | **+226.2 ± 28.4 Elo** | **100.0%** |
+| **Bullet (60s + 0s)** | 515 | 360 - 104 - 51 | **80.0%** | **+240.8 ± 31.2 Elo** | **100.0%** |
 
 ---
 
