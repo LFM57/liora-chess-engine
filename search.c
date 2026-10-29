@@ -26,6 +26,19 @@ void InitMvvLva() {
     }
 }
 
+int LmrTable[MAX_DEPTH][MAX_MOVES];
+void InitLMR() {
+    for (int d = 0; d < MAX_DEPTH; ++d) {
+        for (int m = 0; m < MAX_MOVES; ++m) {
+            if (d >= 1 && m >= 1) {
+                LmrTable[d][m] = (int)(0.75 + log(d) * log(m) / 2.25);
+            } else {
+                LmrTable[d][m] = 0;
+            }
+        }
+    }
+}
+
 int Evaluate(const Board *pos) {
     if (NNUE_Loaded) {
         return EvaluateNNUE(pos);
@@ -722,11 +735,22 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         } else {
             // Late Move Reduction (LMR) + Principal Variation Search (PVS)
             int reduction = 0;
-            // Ne JAMAIS réduire si le coup donne échec ou si on était en échec
-            if(depth >= 3 && movesSearched > 4 && move.capture == EMPTY && move.promoted == EMPTY && !inCheck && !givesCheck) {
-                reduction = 1;
-                if (movesSearched > 6) reduction++;  
-                if (depth > 6) reduction++;          
+            if(depth >= 3 && movesSearched > (isPvNode ? 4 : 2) && move.capture == EMPTY && move.promoted == EMPTY && !inCheck && !givesCheck) {
+                int d = (depth < MAX_DEPTH) ? depth : MAX_DEPTH - 1;
+                int m = (movesSearched < MAX_MOVES) ? movesSearched : MAX_MOVES - 1;
+                reduction = LmrTable[d][m];
+
+                if (isPvNode) reduction--;
+
+                if ((move.from == KillerMoves[pos->ply][0].from && move.to == KillerMoves[pos->ply][0].to) ||
+                    (move.from == KillerMoves[pos->ply][1].from && move.to == KillerMoves[pos->ply][1].to)) {
+                    reduction--;
+                }
+
+                reduction -= History[pos->side][move.from][move.to] / 8192;
+
+                if (reduction < 0) reduction = 0;
+                if (reduction > depth - 2) reduction = depth - 2;
             }
             
             // Step 1: Zero-Window search with reduction

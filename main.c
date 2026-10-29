@@ -128,6 +128,7 @@ int main() {
     
     extern void InitMvvLva();
     InitMvvLva();
+    InitLMR();
     
     char line[2048];
     

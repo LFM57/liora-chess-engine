@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <time.h>
+#include <math.h>
 #include "nnue.h"
 
 #ifdef _WIN32
@@ -104,6 +105,7 @@ extern uint8_t TTAge;
 extern int PvArray[MAX_DEPTH];
 extern int History[2][64][64];
 extern Move KillerMoves[MAX_DEPTH][2];
+extern int LmrTable[MAX_DEPTH][MAX_MOVES];
 extern TT TranspositionTable;
 extern int NNUE_Loaded;
 extern U64 SetMask[64];
@@ -148,6 +150,7 @@ int IsRepetition(const Board *pos);
 int SqAttacked(int sq, int side, const Board *pos);
 
 // search.c
+void InitLMR();
 int SEE(const Board *pos, Move move, int threshold);
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime);
 int Evaluate(const Board *pos);
