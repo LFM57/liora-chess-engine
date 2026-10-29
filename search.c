@@ -597,7 +597,10 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         }
     }
 
-    int static_eval = Evaluate(pos);
+    int static_eval = -INF;
+    if (!inCheck) {
+        static_eval = Evaluate(pos);
+    }
 
     // Reverse Futility Pruning (retour propre de beta)
     if (!isPvNode && !inCheck && depth <= 4 && allow_null) {
@@ -720,6 +723,14 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         if (!isPvNode && !inCheck && !givesCheck && depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
             int lmpThreshold = 3 + 2 * depth * depth; 
             if (movesSearched >= lmpThreshold) {
+                TakeMove(pos, move);
+                continue;
+            }
+        }
+        
+        // Forward Futility Pruning
+        if (!isPvNode && !inCheck && !givesCheck && movesSearched > 0 && depth <= 5 && move.capture == EMPTY && move.promoted == EMPTY) {
+            if (static_eval + 100 + 120 * depth <= alpha) {
                 TakeMove(pos, move);
                 continue;
             }
