@@ -904,10 +904,11 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         int alpha = -INF;
         int beta = INF;
         int score;
+        int delta = 25;
 
         if (d >= 4) {
-            alpha = previousScore - 50;
-            beta = previousScore + 50;
+            alpha = previousScore - delta;
+            beta = previousScore + delta;
         }
 
         while (1) {
@@ -915,12 +916,22 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
             score = Negamax(pos, d, alpha, beta, 1, pvLine);
             if (StopSearch) break;
 
-            // If search fails outside the aspiration window, widen to full window
-            if (score <= alpha || score >= beta) {
+            if (score <= alpha) {
+                beta = (alpha + beta) / 2;
+                alpha = score - delta;
+                if (alpha < -INF) alpha = -INF;
+                delta *= 2;
+            } else if (score >= beta) {
+                beta = score + delta;
+                if (beta > INF) beta = INF;
+                delta *= 2;
+            } else {
+                break;
+            }
+
+            if (delta > 500) {
                 alpha = -INF;
                 beta = INF;
-            } else {
-                break; 
             }
         }
         
