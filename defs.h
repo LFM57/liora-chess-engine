@@ -85,12 +85,13 @@ typedef struct Board {
 
 typedef struct {
     U64 key;
-    int depth;
-    int score;
-    int flag;
-    int move_from;
-    int move_to;
-    int move_prom;
+    int16_t score;
+    uint8_t depth;
+    uint8_t flag;
+    uint8_t age;
+    uint8_t move_from;
+    uint8_t move_to;
+    uint8_t move_prom;
 } TTEntry;
 
 typedef struct {
@@ -99,6 +100,7 @@ typedef struct {
 } TT;
 
 // Globals
+extern uint8_t TTAge;
 extern int PvArray[MAX_DEPTH];
 extern int History[2][64][64];
 extern Move KillerMoves[MAX_DEPTH][2];

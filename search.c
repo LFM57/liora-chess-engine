@@ -5,6 +5,8 @@ int PvArray[MAX_DEPTH];
 int History[2][64][64];
 Move KillerMoves[MAX_DEPTH][2];
 TT TranspositionTable;
+_Static_assert(sizeof(TTEntry) == 16, "TTEntry must be 16 bytes");
+uint8_t TTAge = 0;
 
 // Eval weights
 extern int PieceValuesMG[13];
@@ -228,11 +230,16 @@ void InitTT(int mb) {
 }
 
 void ClearTT() {
+    TTAge = 0;
     for(int i=0; i<TranspositionTable.numEntries; ++i) {
         TranspositionTable.entries[i].key = 0;
         TranspositionTable.entries[i].depth = 0;
         TranspositionTable.entries[i].flag = 0;
         TranspositionTable.entries[i].score = 0;
+        TranspositionTable.entries[i].age = 0;
+        TranspositionTable.entries[i].move_from = NO_SQ;
+        TranspositionTable.entries[i].move_to = NO_SQ;
+        TranspositionTable.entries[i].move_prom = EMPTY;
     }
 }
 
@@ -244,7 +251,7 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
     
     // Protection : Ne pas laisser une recherche superficielle écraser une entrée plus profonde
     if (TranspositionTable.entries[index].key != 0 && TranspositionTable.entries[index].key != key) {
-        if (TranspositionTable.entries[index].depth > depth) {
+        if (TranspositionTable.entries[index].age == TTAge && TranspositionTable.entries[index].depth > depth + 2) {
             return;
         }
     } else if (TranspositionTable.entries[index].key == key) {
@@ -257,8 +264,15 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
 
     TranspositionTable.entries[index].key = key;
     TranspositionTable.entries[index].depth = depth;
-    TranspositionTable.entries[index].score = score;
     TranspositionTable.entries[index].flag = flag;
+    TranspositionTable.entries[index].age = TTAge;
+
+    int tt_score = score;
+    if (score > MATE_SCORE - MAX_DEPTH) tt_score = 30000 + (score - MATE_SCORE);
+    else if (score < -MATE_SCORE + MAX_DEPTH) tt_score = -30000 + (score - (-MATE_SCORE));
+    else if (score > 30000) tt_score = 30000;
+    else if (score < -30000) tt_score = -30000;
+    TranspositionTable.entries[index].score = (int16_t)tt_score;
     
     // FIX: Only preserve the existing TT move if writing to the SAME position
     if (move.from != NO_SQ) {
@@ -405,8 +419,15 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     Move bestMoveTT = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     if(tte && tte->key == pos->posKey) {
         int score = tte->score;
-        if (score > MATE_SCORE - MAX_DEPTH) score -= pos->ply;
-        else if (score < -MATE_SCORE + MAX_DEPTH) score += pos->ply;
+        if (score > 30000 - MAX_DEPTH) {
+            score = MATE_SCORE + (score - 30000) - pos->ply;
+        } else if (score < -30000 + MAX_DEPTH) {
+            score = -MATE_SCORE + (score - (-30000)) + pos->ply;
+        } else if (score > MATE_SCORE - MAX_DEPTH) {
+            score -= pos->ply;
+        } else if (score < -MATE_SCORE + MAX_DEPTH) {
+            score += pos->ply;
+        }
 
         if(tte->depth >= depth) {
             int isPvNode = (beta - alpha > 1);
@@ -631,6 +652,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
 }
 
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime) {
+    TTAge++;
     StopSearch = 0;
     Nodes = 0;
     StartTime = GetTimeMs();
