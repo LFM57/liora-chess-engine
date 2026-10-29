@@ -119,6 +119,8 @@ extern U64 RookMagics[64];
 extern U64 RookAttacks[64][4096];
 extern int RookBits[64];
 extern U64 KnightAttacks[64];
+extern U64 KingAttacks[64];
+extern U64 PawnAttacks[2][64];
 extern U64 BishopMasks[64];
 extern U64 BishopMagics[64];
 extern U64 BishopAttacks[64][512];
@@ -146,6 +148,7 @@ int IsRepetition(const Board *pos);
 int SqAttacked(int sq, int side, const Board *pos);
 
 // search.c
+int SEE(const Board *pos, Move move, int threshold);
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime);
 int Evaluate(const Board *pos);
 void InitTT(int mb);

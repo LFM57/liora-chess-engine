@@ -317,6 +317,134 @@ void CheckTime() {
     }
 }
 
+static const int see_values[13] = {
+    100, 300, 300, 500, 900, 20000, // P, N, B, R, Q, K
+    100, 300, 300, 500, 900, 20000, // p, n, b, r, q, k
+    0                               // EMPTY
+};
+
+int SEE(const Board *pos, Move move, int threshold) {
+    int from = move.from;
+    int to = move.to;
+
+    int moving_piece = pos->board[from];
+    if (moving_piece == EMPTY) {
+        moving_piece = GetPieceAt(pos, from, pos->side);
+    }
+    int attacker_value = see_values[moving_piece];
+
+    int gain = 0;
+    int is_ep = (move.move_type == 1);
+    if (is_ep) {
+        gain = 100; // Pawn
+    } else {
+        int captured = move.capture;
+        if (captured == EMPTY) captured = pos->board[to];
+        gain = see_values[captured];
+    }
+
+    if (move.promoted != EMPTY) {
+        gain += see_values[move.promoted] - 100;
+        attacker_value = see_values[move.promoted];
+    }
+
+    // Early exits
+    if (gain - threshold < 0) return 0;
+    if (gain - attacker_value >= threshold) return 1;
+
+    // Build initial occupancy
+    U64 occ = 0;
+    for (int i = 0; i < 12; ++i) occ |= pos->pieces[i];
+
+    // Remove from square
+    occ ^= (1ULL << from);
+    if (is_ep) {
+        int capSq = (pos->side == WHITE) ? to - 8 : to + 8;
+        occ ^= (1ULL << capSq);
+    }
+
+    int captured_val[32];
+    int num_captures = 0;
+    captured_val[num_captures++] = gain;
+    int piece_on_to_val = attacker_value;
+
+    int side = pos->side ^ 1;
+
+    while (num_captures < 32) {
+        int att_val = 0;
+        int att_sq = NO_SQ;
+
+        // 1. Pawn
+        U64 pawns = (side == WHITE) ? (PawnAttacks[BLACK][to] & pos->pieces[P] & occ)
+                                    : (PawnAttacks[WHITE][to] & pos->pieces[p] & occ);
+        if (pawns) {
+            att_val = 100;
+            att_sq = __builtin_ctzll(pawns);
+        } else {
+            // 2. Knight
+            U64 knights = KnightAttacks[to] & pos->pieces[side == WHITE ? N : n] & occ;
+            if (knights) {
+                att_val = 300;
+                att_sq = __builtin_ctzll(knights);
+            } else {
+                // 3. Bishop
+                U64 bishops = GetBishopAttacks(to, occ) & pos->pieces[side == WHITE ? B : b] & occ;
+                if (bishops) {
+                    att_val = 300;
+                    att_sq = __builtin_ctzll(bishops);
+                } else {
+                    // 4. Rook
+                    U64 rooks = GetRookAttacks(to, occ) & pos->pieces[side == WHITE ? R : r] & occ;
+                    if (rooks) {
+                        att_val = 500;
+                        att_sq = __builtin_ctzll(rooks);
+                    } else {
+                        // 5. Queen
+                        U64 queens = (GetBishopAttacks(to, occ) | GetRookAttacks(to, occ)) & pos->pieces[side == WHITE ? Q : q] & occ;
+                        if (queens) {
+                            att_val = 900;
+                            att_sq = __builtin_ctzll(queens);
+                        } else {
+                            // 6. King
+                            U64 king = KingAttacks[to] & pos->pieces[side == WHITE ? K : k] & occ;
+                            if (king) {
+                                int enemy = side ^ 1;
+                                U64 enemy_pawns = (enemy == WHITE) ? (PawnAttacks[BLACK][to] & pos->pieces[P] & occ)
+                                                                   : (PawnAttacks[WHITE][to] & pos->pieces[p] & occ);
+                                U64 enemy_knights = KnightAttacks[to] & pos->pieces[enemy == WHITE ? N : n] & occ;
+                                U64 enemy_bishops_queens = GetBishopAttacks(to, occ) & (pos->pieces[enemy == WHITE ? B : b] | pos->pieces[enemy == WHITE ? Q : q]) & occ;
+                                U64 enemy_rooks_queens = GetRookAttacks(to, occ) & (pos->pieces[enemy == WHITE ? R : r] | pos->pieces[enemy == WHITE ? Q : q]) & occ;
+                                U64 enemy_king = KingAttacks[to] & pos->pieces[enemy == WHITE ? K : k] & occ;
+
+                                if (!enemy_pawns && !enemy_knights && !enemy_bishops_queens && !enemy_rooks_queens && !enemy_king) {
+                                    att_val = 20000;
+                                    att_sq = __builtin_ctzll(king);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (att_sq == NO_SQ) break;
+
+        captured_val[num_captures++] = piece_on_to_val;
+        piece_on_to_val = att_val;
+        occ ^= (1ULL << att_sq);
+        side ^= 1;
+    }
+
+    int r[32];
+    r[num_captures] = 0;
+    for (int k = num_captures - 1; k >= 1; k--) {
+        int score = captured_val[k] - r[k + 1];
+        r[k] = (score > 0) ? score : 0;
+    }
+    r[0] = captured_val[0] - r[1];
+    return (r[0] >= threshold);
+}
+
 int Quiescence(Board *pos, int alpha, int beta) {
     Nodes++;
     CheckTime();
@@ -373,6 +501,11 @@ int Quiescence(Board *pos, int alpha, int beta) {
             }
         }
         
+        // SEE Pruning : Prune losing captures in Quiescence
+        if (!inCheck && moves[i].promoted == EMPTY && !SEE(pos, moves[i], 0)) {
+            continue;
+        }
+
         Move move = moves[i];
         if(!MakeMove(pos, move)) continue;
         legalMoves++;
@@ -517,7 +650,11 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         else if(moves[i].capture != EMPTY) {
             int type = GetPieceAt(pos, moves[i].from, pos->side);
             int attacker = (type != EMPTY) ? (type % 6) : P;
-            moveScores[i] = 100000 + MvvLva[attacker][moves[i].capture % 6];
+            if (SEE(pos, moves[i], 0)) {
+                moveScores[i] = 100000 + MvvLva[attacker][moves[i].capture % 6];
+            } else {
+                moveScores[i] = -100000 + MvvLva[attacker][moves[i].capture % 6];
+            }
         }
         else {
             if(moves[i].from == KillerMoves[pos->ply][0].from && moves[i].to == KillerMoves[pos->ply][0].to) moveScores[i] = 90000;
@@ -548,6 +685,19 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         
         Move move = moves[i];
         
+        // SEE Pruning
+        if (!isPvNode && !inCheck && movesSearched > 0 && depth <= 6) {
+            if (move.capture == EMPTY && move.promoted == EMPTY) {
+                if (!SEE(pos, move, -50 * depth)) {
+                    continue;
+                }
+            } else {
+                if (!SEE(pos, move, -90 * depth * depth)) {
+                    continue;
+                }
+            }
+        }
+
         if(!MakeMove(pos, move)) continue;
         
         // Détecter si le coup joué donne échec
