@@ -39,12 +39,14 @@ ENTRY_DTYPE = np.dtype([
 
 
 def parse_fen_fast(fen_str):
-    """Fast single-pass FEN parser returning original and horizontally mirrored positions."""
+    """Fast single-pass FEN parser returning original and optionally horizontally mirrored positions."""
     parts = fen_str.split()
     if len(parts) < 2:
         return None
     board_str = parts[0]
     side = 0 if parts[1] == 'w' else 1
+    castling = parts[2] if len(parts) > 2 else "-"
+    allow_mirror = (castling == "-")
 
     rank = 7
     file = 0
@@ -84,23 +86,28 @@ def parse_fen_fast(fen_str):
         p_w = PIECE_MAP_W.get(ch)
         if p_w is not None:
             w_feats.append(w_ksq * 640 + p_w * 64 + sq)
-            w_feats_m.append(w_ksq_m * 640 + p_w * 64 + (sq ^ 7))
+            if allow_mirror:
+                w_feats_m.append(w_ksq_m * 640 + p_w * 64 + (sq ^ 7))
 
             p_b = PIECE_MAP_B[ch]
             b_feats.append(b_ksq_flipped * 640 + p_b * 64 + (sq ^ 56))
-            b_feats_m.append(b_ksq_m_flipped * 640 + p_b * 64 + (sq ^ 63))
+            if allow_mirror:
+                b_feats_m.append(b_ksq_m_flipped * 640 + p_b * 64 + (sq ^ 63))
 
     w_arr = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
     b_arr = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
     w_arr[:len(w_feats)] = w_feats[:MAX_PIECES]
     b_arr[:len(b_feats)] = b_feats[:MAX_PIECES]
 
-    w_arr_m = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
-    b_arr_m = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
-    w_arr_m[:len(w_feats_m)] = w_feats_m[:MAX_PIECES]
-    b_arr_m[:len(b_feats_m)] = b_feats_m[:MAX_PIECES]
+    mirr = None
+    if allow_mirror:
+        w_arr_m = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
+        b_arr_m = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
+        w_arr_m[:len(w_feats_m)] = w_feats_m[:MAX_PIECES]
+        b_arr_m[:len(b_feats_m)] = b_feats_m[:MAX_PIECES]
+        mirr = (side, w_arr_m, b_arr_m)
 
-    return (side, w_arr, b_arr), (side, w_arr_m, b_arr_m)
+    return (side, w_arr, b_arr), mirr
 
 
 def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_size=100000):
@@ -145,7 +152,8 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
                 target = 1.0 - target
 
             chunk.append((orig[0], target, orig[1], orig[2]))
-            chunk.append((mirr[0], target, mirr[1], mirr[2]))
+            if mirr is not None:
+                chunk.append((mirr[0], target, mirr[1], mirr[2]))
 
             if len(chunk) >= chunk_size:
                 records = np.zeros(len(chunk), dtype=ENTRY_DTYPE)
