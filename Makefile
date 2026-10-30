@@ -1,5 +1,5 @@
 CC ?= gcc
-CFLAGS = -O3 -Wall -Wextra
+CFLAGS = -O3 -march=native -Wall -Wextra
 LDFLAGS = -lm
 
 SRC = board.c main.c nnue.c polyglot.c search.c
