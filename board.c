@@ -885,7 +885,7 @@ void GenerateCaptures(const Board *pos, Move *moveList, int *moveCount) {
 }
 
 int MakeMove(Board *pos, Move move) {
-    if(pos->hisPly >= 1024) return 0;
+    if(pos->hisPly >= 1023) return 0;
     
     int from = move.from;
     int to = move.to;

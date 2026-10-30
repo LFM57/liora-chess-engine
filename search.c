@@ -613,7 +613,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     }
 
     // Null Move Pruning (uniquement si l'évaluation statique bat déjà beta)
-    if(allow_null && depth >= 3 && !inCheck && has_major_pieces && static_eval >= beta) {
+    if(allow_null && depth >= 3 && !inCheck && has_major_pieces && static_eval >= beta && pos->hisPly < 1023) {
         // Make Null
         int savedEnPas = pos->enPas;
         U64 savedKey = pos->posKey;
