@@ -146,8 +146,19 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
 
             orig, mirr = parsed
 
-            # Pure evaluation target from White's perspective, flipped if Black to move
-            target = 1.0 / (1.0 + np.exp(-score / 400.0))
+            # Evaluation target blended with game outcome (WDL) from White's perspective
+            eval_target = 1.0 / (1.0 + np.exp(-score / 400.0))
+            if len(parts) >= 3:
+                try:
+                    wdl = float(parts[2].strip())  # 1.0 = White win, 0.5 = Draw, 0.0 = Black win
+                    LAMBDA = 0.7                   # 70% search eval, 30% game result
+                    target = LAMBDA * eval_target + (1.0 - LAMBDA) * wdl
+                except ValueError:
+                    target = eval_target
+            else:
+                target = eval_target
+
+            # Flip target to side-to-move perspective
             if orig[0] == 1:
                 target = 1.0 - target
 
