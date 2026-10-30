@@ -1161,7 +1161,7 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
             int inCheck = SqAttacked(gPos.king_sq[gPos.side], gPos.side ^ 1, &gPos);
 
             // Record quiet positions (avoid tactical noise/checks during training)
-            if (!inCheck && ply >= 10 && bestMove.from != NO_SQ &&
+            if (!inCheck && ply >= 2 && bestMove.from != NO_SQ &&
                 bestMove.capture == EMPTY && bestMove.promoted == EMPTY &&
                 abs(score) < 3000 && posCount < 500) {
                 GetBoardFen(&gPos, gameFens[posCount]);
