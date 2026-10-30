@@ -542,8 +542,10 @@ void ParseFen(char *fen, Board *pos) {
     pos->pawns[BOTH] = pos->pawns[WHITE] | pos->pawns[BLACK];
     pos->posKey = GeneratePosKey(pos);
     InitEval(pos);
-    RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, WHITE);
-    RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, BLACK);
+    if (NNUE_Loaded) {
+        RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, WHITE);
+        RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, BLACK);
+    }
 }
 
 // Move Gen Helpers
@@ -1029,19 +1031,21 @@ int MakeMove(Board *pos, Move move) {
     }
     
     // Update NNUE Accumulator for the new ply (only on legal moves)
-    int capSq = to;
-    if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
-    UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
-                          pType, from, to, move.capture, capSq, move.promoted);
+    if (NNUE_Loaded) {
+        int capSq = to;
+        if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
+        UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
+                              pType, from, to, move.capture, capSq, move.promoted);
 
-    // If castling, update the moved Rook in the opponent's accumulator
-    if (move.move_type == 2) {
-        int rFrom = NO_SQ, rTo = NO_SQ;
-        if (to == G1)      { rFrom = H1; rTo = F1; }
-        else if (to == C1) { rFrom = A1; rTo = D1; }
-        else if (to == G8) { rFrom = H8; rTo = F8; }
-        else if (to == C8) { rFrom = A8; rTo = D8; }
-        UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
+        // If castling, update the moved Rook in the opponent's accumulator
+        if (move.move_type == 2) {
+            int rFrom = NO_SQ, rTo = NO_SQ;
+            if (to == G1)      { rFrom = H1; rTo = F1; }
+            else if (to == C1) { rFrom = A1; rTo = D1; }
+            else if (to == G8) { rFrom = H8; rTo = F8; }
+            else if (to == C8) { rFrom = A8; rTo = D8; }
+            UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
+        }
     }
     
     return 1;

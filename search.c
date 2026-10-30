@@ -628,7 +628,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         }
         
         // FIX: Copy accumulator state to new hisPly so NNUE never reads uninitialized memory
-        pos->accumStack[pos->hisPly] = pos->accumStack[pos->hisPly - 1];
+        if (NNUE_Loaded) {
+            pos->accumStack[pos->hisPly] = pos->accumStack[pos->hisPly - 1];
+        }
         
         Move nullPv[MAX_DEPTH]; // Dummy
         nullPv[0].from = NO_SQ;
