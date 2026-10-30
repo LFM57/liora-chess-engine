@@ -1101,7 +1101,7 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
     printf("Starting self-play generation: %d games at Depth %d -> File: %s\n", numGames, searchDepth, outFile);
 
-    Board gPos;
+    static Board gPos;
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
     ClearTT(); // Clear TT once before data generation starts
 
