@@ -1114,6 +1114,7 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
             ClearTT();
         }
         memset(KillerMoves, 0, sizeof(KillerMoves));
+        memset(History, 0, sizeof(History));
 
         ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &gPos);
 
@@ -1139,6 +1140,8 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
         // 2. Play game using iterative deepening search
         float gameResult = 0.5f; // Draw default
+        int whiteWinStreak = 0;
+        int blackWinStreak = 0;
         for (int ply = 0; ply < maxPlies; ++ply) {
             Move pvLine[MAX_DEPTH];
             Move bestMove = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
@@ -1178,6 +1181,27 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
             if (score < -MATE_SCORE + 100) { 
                 gameResult = (gPos.side == WHITE) ? 0.0f : 1.0f; 
                 break; 
+            }
+
+            // Win adjudication for decisive non-mate positions
+            int whiteScore = (gPos.side == WHITE) ? score : -score;
+            if (whiteScore >= 1000) {
+                whiteWinStreak++;
+                blackWinStreak = 0;
+                if (whiteWinStreak >= 4) {
+                    gameResult = 1.0f;
+                    break;
+                }
+            } else if (whiteScore <= -1000) {
+                blackWinStreak++;
+                whiteWinStreak = 0;
+                if (blackWinStreak >= 4) {
+                    gameResult = 0.0f;
+                    break;
+                }
+            } else {
+                whiteWinStreak = 0;
+                blackWinStreak = 0;
             }
 
             // Apply best move found
