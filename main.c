@@ -5,6 +5,9 @@
 #endif
 
 Board pos;
+char BookPath[512] = "";
+char EvalFile[512] = "<embedded>";
+int UseNNUE = 1;
 
 void ParseGo(char *line) {
     int depth = -1, wtime = 300000, btime = 300000, winc = 0, binc = 0, movestogo = 30, movetime = -1;
@@ -94,6 +97,27 @@ void ParseOption(char *line) {
             strncpy(BookPath, ptr, 511);
         }
     }
+    // Parse: setoption name UseNNUE value <true|false>
+    else if(strstr(line, "name UseNNUE") || strstr(line, "name usennue") ||
+            strstr(line, "name Use NNUE") || strstr(line, "name use nnue")) {
+        char *ptr = strstr(line, "value");
+        if(ptr) {
+            ptr += 6;
+            while(*ptr == ' ') ptr++;
+            if(strncmp(ptr, "false", 5) == 0 || strncmp(ptr, "0", 1) == 0) {
+                UseNNUE = 0;
+                DisableNNUE();
+                printf("info string NNUE disabled (using HCE)\n");
+            } else if(strncmp(ptr, "true", 4) == 0 || strncmp(ptr, "1", 1) == 0) {
+                UseNNUE = 1;
+                InitNNUE(EvalFile);
+            }
+            pos.accumStack[pos.hisPly].computed[WHITE] = 0;
+            pos.accumStack[pos.hisPly].computed[BLACK] = 0;
+            pos.accumStack[0].computed[WHITE] = 0;
+            pos.accumStack[0].computed[BLACK] = 0;
+        }
+    }
     // Parse: setoption name EvalFile value <path>
     else if(strstr(line, "name EvalFile") || strstr(line, "name evalfile")) {
         char *ptr = strstr(line, "value");
@@ -102,7 +126,12 @@ void ParseOption(char *line) {
             while(*ptr == ' ') ptr++;
             char *end = ptr + strlen(ptr) - 1;
             while(end > ptr && (*end == '\n' || *end == '\r' || *end == ' ')) *end-- = '\0';
-            InitNNUE(ptr);
+            strncpy(EvalFile, ptr, sizeof(EvalFile) - 1);
+            EvalFile[sizeof(EvalFile) - 1] = '\0';
+
+            if(UseNNUE) {
+                InitNNUE(EvalFile);
+            }
             pos.accumStack[pos.hisPly].computed[WHITE] = 0;
             pos.accumStack[pos.hisPly].computed[BLACK] = 0;
             pos.accumStack[0].computed[WHITE] = 0;
@@ -110,8 +139,6 @@ void ParseOption(char *line) {
         }
     }
 }
-
-char BookPath[512] = "";
 
 int main() {
     AllInit();
@@ -123,7 +150,14 @@ int main() {
     srand((unsigned int)(time(NULL) ^ (getpid() << 16)));
 #endif
 
-    InitNNUE("liora.nnue"); // Attempts to load liora.nnue from working directory
+    if(HasEmbeddedNNUE()) {
+        strncpy(EvalFile, "<embedded>", sizeof(EvalFile) - 1);
+        InitNNUE(EvalFile);
+    } else {
+        strncpy(EvalFile, "<empty>", sizeof(EvalFile) - 1);
+        InitNNUE("liora.nnue");
+    }
+
     InitTT(64);
     
     extern void InitMvvLva();
@@ -144,7 +178,8 @@ int main() {
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max 4096\n");
             printf("option name BookPath type string default <empty>\n");
-            printf("option name EvalFile type string default liora.nnue\n");
+            printf("option name UseNNUE type check default %s\n", UseNNUE ? "true" : "false");
+            printf("option name EvalFile type string default %s\n", HasEmbeddedNNUE() ? "<embedded>" : "<empty>");
             printf("uciok\n");
         } else if(!strncmp(line, "setoption", 9)) {
             ParseOption(line);
