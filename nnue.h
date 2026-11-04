@@ -2,6 +2,7 @@
 #define NNUE_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define NNUE_INPUTS 40960 // 64 king squares * 10 piece types * 64 piece squares
 #define NNUE_L1 256       // 256 neurons per perspective
@@ -19,7 +20,15 @@ struct Board;
 // NNUE Public API
 void InitNNUE(const char *filename);
 int LoadNNUE(const char *filename);
+int LoadNNUEMemory(const void *data, size_t size);
+int LoadEmbeddedNNUE(void);
+void DisableNNUE(void);
 int EvaluateNNUE(const struct Board *pos);
+
+// Embedded NNUE query API
+int HasEmbeddedNNUE(void);
+const void *GetEmbeddedNNUEData(void);
+size_t GetEmbeddedNNUESize(void);
 
 void RefreshAccumulator(Accumulator *acc, const struct Board *pos, int side);
 void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const struct Board *pos, int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece);
