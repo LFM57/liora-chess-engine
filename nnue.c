@@ -199,6 +199,54 @@ int EvaluateNNUE(const struct Board *pos) {
     return sum / NNUE_SCALE;
 }
 
+static inline int EqualsIgnoreCase(const char *s1, const char *s2) {
+    if (!s1 || !s2) return 0;
+    while (*s1 && *s2) {
+        char c1 = (*s1 >= 'A' && *s1 <= 'Z') ? (*s1 + 32) : *s1;
+        char c2 = (*s2 >= 'A' && *s2 <= 'Z') ? (*s2 + 32) : *s2;
+        if (c1 != c2) return 0;
+        s1++;
+        s2++;
+    }
+    return (*s1 == '\0' && *s2 == '\0');
+}
+
+void DisableNNUE(void) {
+    memset(FeatureWeights, 0, sizeof(FeatureWeights));
+    for (int i = 0; i < NNUE_L1; ++i) FeatureBiases[i] = 0;
+    for (int i = 0; i < 2 * NNUE_L1; ++i) OutputWeights[i] = 0;
+    OutputBias = 0;
+    NNUE_Loaded = 0;
+}
+
+int LoadNNUEMemory(const void *data, size_t size) {
+    size_t expected = sizeof(FeatureBiases) + sizeof(FeatureWeights) + sizeof(OutputBias) + sizeof(OutputWeights);
+    if (!data || size != expected) {
+        DisableNNUE();
+        return 0;
+    }
+
+    const uint8_t *ptr = (const uint8_t *)data;
+    memcpy(FeatureBiases, ptr, sizeof(FeatureBiases));
+    ptr += sizeof(FeatureBiases);
+    memcpy(FeatureWeights, ptr, sizeof(FeatureWeights));
+    ptr += sizeof(FeatureWeights);
+    memcpy(&OutputBias, ptr, sizeof(OutputBias));
+    ptr += sizeof(OutputBias);
+    memcpy(OutputWeights, ptr, sizeof(OutputWeights));
+
+    NNUE_Loaded = 1;
+    return 1;
+}
+
+int LoadEmbeddedNNUE(void) {
+    if (!HasEmbeddedNNUE()) {
+        DisableNNUE();
+        return 0;
+    }
+    return LoadNNUEMemory(GetEmbeddedNNUEData(), GetEmbeddedNNUESize());
+}
+
 int LoadNNUE(const char *filename) {
     FILE *f = fopen(filename, "rb");
     if (!f) return 0;
@@ -213,7 +261,7 @@ int LoadNNUE(const char *filename) {
 
     size_t expected = (size_t)NNUE_L1 + (size_t)NNUE_INPUTS * NNUE_L1 + 1 + 2 * (size_t)NNUE_L1;
     if (r != expected) {
-        NNUE_Loaded = 0;
+        DisableNNUE();
         return 0;
     }
 
@@ -222,19 +270,45 @@ int LoadNNUE(const char *filename) {
 }
 
 void InitNNUE(const char *filename) {
-    if (filename && filename[0] != '\0' && LoadNNUE(filename)) {
+    // Check if filename requests embedded net
+    if (!filename || filename[0] == '\0' ||
+        EqualsIgnoreCase(filename, "<embedded>") ||
+        EqualsIgnoreCase(filename, "embedded") ||
+        EqualsIgnoreCase(filename, "<internal>") ||
+        EqualsIgnoreCase(filename, "internal")) {
+        if (LoadEmbeddedNNUE()) {
+            printf("info string Embedded NNUE net loaded successfully\n");
+            return;
+        }
+        printf("info string Warning: No embedded NNUE available, falling back to HCE\n");
+        DisableNNUE();
+        return;
+    }
+
+    // Check if filename explicitly disables NNUE
+    if (EqualsIgnoreCase(filename, "<none>") ||
+        EqualsIgnoreCase(filename, "none") ||
+        EqualsIgnoreCase(filename, "off") ||
+        EqualsIgnoreCase(filename, "<empty>")) {
+        DisableNNUE();
+        printf("info string NNUE disabled, falling back to HCE\n");
+        return;
+    }
+
+    // Otherwise attempt to load custom net from file
+    if (LoadNNUE(filename)) {
         printf("info string NNUE net loaded successfully from %s\n", filename);
         return;
     }
 
-    printf("info string Warning: Failed to load NNUE net from %s, falling back to HCE\n",
-           (filename && filename[0] != '\0') ? filename : "<empty>");
+    // If loading custom net fails, fallback to embedded net if available
+    if (HasEmbeddedNNUE() && LoadEmbeddedNNUE()) {
+        printf("info string Warning: Failed to load NNUE net from %s, falling back to embedded NNUE\n", filename);
+        return;
+    }
 
-    memset(FeatureWeights, 0, sizeof(FeatureWeights));
-    for (int i = 0; i < NNUE_L1; ++i) FeatureBiases[i] = 0;
-    for (int i = 0; i < 2 * NNUE_L1; ++i) OutputWeights[i] = 0;
-    OutputBias = 0;
-    NNUE_Loaded = 0;
+    printf("info string Warning: Failed to load NNUE net from %s, falling back to HCE\n", filename);
+    DisableNNUE();
 }
 
 // Updates the moved Rook in the opponent's accumulator during castling
