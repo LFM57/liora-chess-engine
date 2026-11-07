@@ -19,7 +19,7 @@
 typedef unsigned long long U64;
 
 // Constants
-#define NAME "Liora v11.9 C"
+#define NAME "Liora v11.11 C"
 #define AUTHOR "LFM"
 #define MAX_MOVES 256
 #define MAX_DEPTH 64
