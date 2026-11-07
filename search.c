@@ -7,6 +7,7 @@ Move KillerMoves[MAX_DEPTH][2];
 int EvalStack[MAX_DEPTH];
 TT TranspositionTable;
 _Static_assert(sizeof(TTEntry) == 16, "TTEntry must be 16 bytes");
+_Static_assert(sizeof(TTCluster) == 64, "TTCluster must be 64 bytes");
 uint8_t TTAge = 0;
 
 // Eval weights
@@ -232,78 +233,122 @@ int Evaluate(const Board *pos) {
 // TT
 void InitTT(int mb) {
     // Free existing memory if the GUI changes the hash size during runtime
-    if (TranspositionTable.entries != NULL) {
-        free(TranspositionTable.entries);
-        TranspositionTable.entries = NULL;
+    if (TranspositionTable.clusters != NULL) {
+        free(TranspositionTable.clusters);
+        TranspositionTable.clusters = NULL;
     }
     
-    int size = mb * 1024 * 1024 / sizeof(TTEntry);
-    TranspositionTable.entries = (TTEntry*)malloc(size * sizeof(TTEntry));
-    TranspositionTable.numEntries = size;
+    int size = (mb * 1024 * 1024) / sizeof(TTCluster);
+    if (size < 1) size = 1;
+    TranspositionTable.clusters = (TTCluster*)malloc(size * sizeof(TTCluster));
+    TranspositionTable.numClusters = size;
     ClearTT();
 }
 
 void ClearTT() {
     TTAge = 0;
-    for(int i=0; i<TranspositionTable.numEntries; ++i) {
-        TranspositionTable.entries[i].key = 0;
-        TranspositionTable.entries[i].depth = 0;
-        TranspositionTable.entries[i].flag = 0;
-        TranspositionTable.entries[i].score = 0;
-        TranspositionTable.entries[i].age = 0;
-        TranspositionTable.entries[i].move_from = NO_SQ;
-        TranspositionTable.entries[i].move_to = NO_SQ;
-        TranspositionTable.entries[i].move_prom = EMPTY;
+    if (!TranspositionTable.clusters) return;
+    for(int i = 0; i < TranspositionTable.numClusters; ++i) {
+        for(int j = 0; j < TT_CLUSTER_SIZE; ++j) {
+            TranspositionTable.clusters[i].entries[j].key = 0;
+            TranspositionTable.clusters[i].entries[j].depth = 0;
+            TranspositionTable.clusters[i].entries[j].flag = 0;
+            TranspositionTable.clusters[i].entries[j].score = 0;
+            TranspositionTable.clusters[i].entries[j].age = 0;
+            TranspositionTable.clusters[i].entries[j].move_from = NO_SQ;
+            TranspositionTable.clusters[i].entries[j].move_to = NO_SQ;
+            TranspositionTable.clusters[i].entries[j].move_prom = EMPTY;
+        }
     }
 }
 
 void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
-    int index = key % TranspositionTable.numEntries;
+    if (!TranspositionTable.clusters) return;
+    int index = key % TranspositionTable.numClusters;
+    TTCluster *cluster = &TranspositionTable.clusters[index];
     
     if (score > MATE_SCORE - MAX_DEPTH) score += ply;
     else if (score < -MATE_SCORE + MAX_DEPTH) score -= ply;
     
-    // Protection : Ne pas laisser une recherche superficielle écraser une entrée plus profonde
-    if (TranspositionTable.entries[index].key != 0 && TranspositionTable.entries[index].key != key) {
-        if (TranspositionTable.entries[index].age == TTAge && TranspositionTable.entries[index].depth > depth + 2) {
-            return;
-        }
-    } else if (TranspositionTable.entries[index].key == key) {
-        if (TranspositionTable.entries[index].depth > depth) {
-            return;
+    TTEntry *target = NULL;
+    
+    // 1. Check if entry already exists with same key in this cluster
+    for (int i = 0; i < TT_CLUSTER_SIZE; ++i) {
+        if (cluster->entries[i].key == key) {
+            target = &cluster->entries[i];
+            break;
         }
     }
     
-    int sameKey = (TranspositionTable.entries[index].key == key);
-
-    TranspositionTable.entries[index].key = key;
-    TranspositionTable.entries[index].depth = depth;
-    TranspositionTable.entries[index].flag = flag;
-    TranspositionTable.entries[index].age = TTAge;
-
+    if (target) {
+        // If entry exists and is from the same search with greater depth, don't overwrite with shallower
+        if (target->age == TTAge && target->depth > depth && flag != 0) {
+            if (move.from != NO_SQ && target->move_from == NO_SQ) {
+                target->move_from = move.from;
+                target->move_to = move.to;
+                target->move_prom = move.promoted;
+            }
+            return;
+        }
+    } else {
+        // 2. Look for an empty slot
+        for (int i = 0; i < TT_CLUSTER_SIZE; ++i) {
+            if (cluster->entries[i].key == 0) {
+                target = &cluster->entries[i];
+                break;
+            }
+        }
+        
+        // 3. Replacement policy: select slot with lowest replacement priority
+        if (!target) {
+            int worstPriority = 1000000;
+            for (int i = 0; i < TT_CLUSTER_SIZE; ++i) {
+                int ageDiff = (int)TTAge - (int)cluster->entries[i].age;
+                int priority = (int)cluster->entries[i].depth - (ageDiff * 4);
+                if (priority < worstPriority) {
+                    worstPriority = priority;
+                    target = &cluster->entries[i];
+                }
+            }
+            // Do not overwrite deeper entries from the current search
+            if (target->age == TTAge && target->depth >= depth) {
+                return;
+            }
+        }
+    }
+    
+    int sameKey = (target->key == key);
+    target->key = key;
+    target->depth = depth;
+    target->flag = flag;
+    target->age = TTAge;
+    
     int tt_score = score;
     if (score > MATE_SCORE - MAX_DEPTH) tt_score = 30000 + (score - MATE_SCORE);
     else if (score < -MATE_SCORE + MAX_DEPTH) tt_score = -30000 + (score - (-MATE_SCORE));
     else if (score > 30000) tt_score = 30000;
     else if (score < -30000) tt_score = -30000;
-    TranspositionTable.entries[index].score = (int16_t)tt_score;
+    target->score = (int16_t)tt_score;
     
-    // FIX: Only preserve the existing TT move if writing to the SAME position
     if (move.from != NO_SQ) {
-        TranspositionTable.entries[index].move_from = move.from;
-        TranspositionTable.entries[index].move_to = move.to;
-        TranspositionTable.entries[index].move_prom = move.promoted;
+        target->move_from = move.from;
+        target->move_to = move.to;
+        target->move_prom = move.promoted;
     } else if (!sameKey) {
-        TranspositionTable.entries[index].move_from = NO_SQ;
-        TranspositionTable.entries[index].move_to = NO_SQ;
-        TranspositionTable.entries[index].move_prom = EMPTY;
+        target->move_from = NO_SQ;
+        target->move_to = NO_SQ;
+        target->move_prom = EMPTY;
     }
 }
 
 TTEntry* ProbeTT(U64 key) {
-    int index = key % TranspositionTable.numEntries;
-    if(TranspositionTable.entries[index].key == key) {
-        return &TranspositionTable.entries[index];
+    if (!TranspositionTable.clusters) return NULL;
+    int index = key % TranspositionTable.numClusters;
+    TTCluster *cluster = &TranspositionTable.clusters[index];
+    for(int i = 0; i < TT_CLUSTER_SIZE; ++i) {
+        if(cluster->entries[i].key == key) {
+            return &cluster->entries[i];
+        }
     }
     return NULL;
 }

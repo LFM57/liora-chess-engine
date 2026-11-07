@@ -84,6 +84,8 @@ typedef struct Board {
     Accumulator accumStack[1024];
 } Board;
 
+#define TT_CLUSTER_SIZE 4
+
 typedef struct {
     U64 key;
     int16_t score;
@@ -96,8 +98,12 @@ typedef struct {
 } TTEntry;
 
 typedef struct {
-    TTEntry *entries;
-    int numEntries;
+    TTEntry entries[TT_CLUSTER_SIZE];
+} TTCluster;
+
+typedef struct {
+    TTCluster *clusters;
+    int numClusters;
 } TT;
 
 // Globals
