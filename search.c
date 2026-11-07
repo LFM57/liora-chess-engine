@@ -4,7 +4,7 @@
 int PvArray[MAX_DEPTH];
 int History[2][64][64];
 Move KillerMoves[MAX_DEPTH][2];
-int EvalStack[MAX_DEPTH];
+int EvalStack[1024];
 TT TranspositionTable;
 _Static_assert(sizeof(TTEntry) == 16, "TTEntry must be 16 bytes");
 _Static_assert(sizeof(TTCluster) == 64, "TTCluster must be 64 bytes");
@@ -727,6 +727,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         U64 savedKey = pos->posKey;
         
         pos->side ^= 1;
+        EvalStack[pos->ply] = -INF;
         pos->ply++;
         pos->hisPly++;
         pos->posKey ^= SideKey;
@@ -751,6 +752,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         // Undo null
         pos->side ^= 1;
         pos->ply--;
+        EvalStack[pos->ply] = static_eval;
         pos->hisPly--;
         pos->enPas = savedEnPas;
         pos->posKey = savedKey;
