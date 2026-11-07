@@ -865,7 +865,6 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                 reduction = LmrTable[d][m];
 
                 if (isPvNode) reduction--;
-                else reduction++;
 
                 if (!improving) reduction++;
 
