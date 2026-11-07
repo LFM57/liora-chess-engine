@@ -310,10 +310,6 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
                     target = &cluster->entries[i];
                 }
             }
-            // Do not overwrite deeper entries from the current search
-            if (target->age == TTAge && target->depth >= depth) {
-                return;
-            }
         }
     }
     
