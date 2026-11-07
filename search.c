@@ -645,7 +645,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side^1), pos);
     int isPvNode = (beta - alpha > 1);
     
-    if(inCheck && pos->ply < MAX_DEPTH - 1) {
+    // Check Extension (restricted to PV nodes to avoid tree explosion in non-PV lines)
+    if(isPvNode && inCheck && pos->ply < MAX_DEPTH - 1) {
         depth++;
     }
 
