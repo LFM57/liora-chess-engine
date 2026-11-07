@@ -807,7 +807,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                     reduction--;
                 }
 
-                reduction -= History[pos->side][move.from][move.to] / 8192;
+                reduction -= History[pos->side][move.from][move.to] / 2048;
 
                 if (reduction < 0) reduction = 0;
                 if (reduction > depth - 2) reduction = depth - 2;
