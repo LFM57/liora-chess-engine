@@ -682,6 +682,11 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         bestMoveTT.promoted = tte->move_prom;
     }
 
+    // Internal Iterative Reduction (IIR)
+    if (bestMoveTT.from == NO_SQ && depth >= 4) {
+        depth--;
+    }
+
     int ttMoveIsTactical = 0;
     if (bestMoveTT.from != NO_SQ) {
         if (bestMoveTT.promoted != EMPTY || 
