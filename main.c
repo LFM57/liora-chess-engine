@@ -7,7 +7,7 @@
 Board pos;
 char BookPath[512] = "";
 char EvalFile[512] = "<embedded>";
-int UseNNUE = 1;
+int UseNNUE = 0;
 
 void ParseGo(char *line) {
     int depth = -1, wtime = 300000, btime = 300000, winc = 0, binc = 0, movestogo = 30, movetime = -1;
@@ -152,10 +152,13 @@ int main() {
 
     if(HasEmbeddedNNUE()) {
         strncpy(EvalFile, "<embedded>", sizeof(EvalFile) - 1);
-        InitNNUE(EvalFile);
+        UseNNUE = 0;
+        DisableNNUE();
+        printf("info string internal NNUE detected but disabled (HCE is better)\n");
     } else {
         strncpy(EvalFile, "<empty>", sizeof(EvalFile) - 1);
-        InitNNUE("liora.nnue");
+        UseNNUE = 0;
+        DisableNNUE();
     }
 
     InitTT(64);
