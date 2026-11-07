@@ -268,7 +268,7 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
             return;
         }
     } else if (TranspositionTable.entries[index].key == key) {
-        if (TranspositionTable.entries[index].depth > depth && flag != 0) {
+        if (TranspositionTable.entries[index].depth > depth) {
             return;
         }
     }
@@ -465,13 +465,40 @@ int Quiescence(Board *pos, int alpha, int beta) {
     CheckTime();
     if(StopSearch) return 0;
     
+    // TT Probe
+    TTEntry* tte = ProbeTT(pos->posKey);
+    Move bestMoveTT = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
+    if (tte && tte->key == pos->posKey) {
+        int tt_score = tte->score;
+        if (tt_score > 30000 - MAX_DEPTH) {
+            tt_score = MATE_SCORE + (tt_score - 30000) - pos->ply;
+        } else if (tt_score < -30000 + MAX_DEPTH) {
+            tt_score = -MATE_SCORE + (tt_score - (-30000)) + pos->ply;
+        } else if (tt_score > MATE_SCORE - MAX_DEPTH) {
+            tt_score -= pos->ply;
+        } else if (tt_score < -MATE_SCORE + MAX_DEPTH) {
+            tt_score += pos->ply;
+        }
+
+        if (tte->flag == 0) return tt_score;
+        if (tte->flag == 1 && tt_score <= alpha) return tt_score;
+        if (tte->flag == 2 && tt_score >= beta) return tt_score;
+
+        bestMoveTT.from = tte->move_from;
+        bestMoveTT.to = tte->move_to;
+        bestMoveTT.promoted = tte->move_prom;
+    }
+
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
     
     int score = -INF;
     // On ne fait le "Stand-Pat" QUE si le roi n'est pas en échec
     if (!inCheck) {
         score = Evaluate(pos);
-        if(score >= beta) return beta;
+        if(score >= beta) {
+            StoreTT(pos->posKey, 0, beta, 2, bestMoveTT, pos->ply);
+            return beta;
+        }
         if(score > alpha) alpha = score;
     }
     
@@ -485,10 +512,12 @@ int Quiescence(Board *pos, int alpha, int beta) {
         GenerateCaptures(pos, moves, &count);
     }
     
-    // MVV-LVA Move Ordering in QSearch
+    // MVV-LVA Move Ordering in QSearch + TT move bonus
     int moveScores[MAX_MOVES];
     for(int i=0; i<count; ++i) {
-        if(moves[i].promoted != EMPTY) {
+        if(moves[i].from == bestMoveTT.from && moves[i].to == bestMoveTT.to && moves[i].promoted == bestMoveTT.promoted) {
+            moveScores[i] = 1000000;
+        } else if(moves[i].promoted != EMPTY) {
             moveScores[i] = 200000 + moves[i].promoted;
         } else if(moves[i].capture != EMPTY) {
             int pType = pos->board[moves[i].from];
@@ -499,6 +528,9 @@ int Quiescence(Board *pos, int alpha, int beta) {
         }
     }
     
+    int oldAlpha = alpha;
+    int bestScore = score;
+    Move bestMove = bestMoveTT;
     int legalMoves = 0;
     for(int i=0; i<count; ++i) {
         int maxS = -2000000000; int maxI = i;
@@ -529,8 +561,16 @@ int Quiescence(Board *pos, int alpha, int beta) {
         
         if(StopSearch) return 0;
         
-        if(val >= beta) return beta;
-        if(val > alpha) alpha = val;
+        if(val > bestScore) {
+            bestScore = val;
+            bestMove = move;
+            if(val > alpha) {
+                alpha = val;
+                if(val >= beta) {
+                    break;
+                }
+            }
+        }
     }
     
     // Si on était en échec et qu'aucun coup n'est légal -> Mat !
@@ -538,6 +578,11 @@ int Quiescence(Board *pos, int alpha, int beta) {
         return -MATE_SCORE + pos->ply;
     }
     
+    int flag = 1; // Upper bound
+    if (bestScore >= beta) flag = 2; // Lower bound
+    else if (bestScore > oldAlpha) flag = 0; // Exact
+    
+    StoreTT(pos->posKey, 0, bestScore, flag, bestMove, pos->ply);
     return alpha;
 }
 
