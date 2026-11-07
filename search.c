@@ -710,9 +710,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         improving = (static_eval > EvalStack[pos->ply - 2]);
     }
 
-    // Reverse Futility Pruning (retour propre de beta)
-    if (!isPvNode && !inCheck && depth <= 4 && allow_null) {
-        int margin = 120 * depth;
+    // Reverse Futility Pruning (RFP)
+    if (!isPvNode && !inCheck && depth <= 7 && allow_null) {
+        int margin = 80 * (depth - improving);
         if (static_eval - margin >= beta) {
             return beta;
         }
@@ -840,7 +840,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         
         // Forward Futility Pruning
         if (!isPvNode && !inCheck && !givesCheck && movesSearched > 0 && depth <= 5 && move.capture == EMPTY && move.promoted == EMPTY) {
-            if (static_eval + 100 + 120 * depth <= alpha) {
+            int futilityMargin = 80 * depth;
+            if (static_eval + futilityMargin <= alpha) {
                 TakeMove(pos, move);
                 continue;
             }
