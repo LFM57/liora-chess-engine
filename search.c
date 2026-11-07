@@ -532,6 +532,7 @@ int Quiescence(Board *pos, int alpha, int beta) {
     }
 
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
+    int oldAlpha = alpha;
     
     int score = -INF;
     // On ne fait le "Stand-Pat" QUE si le roi n'est pas en échec
@@ -570,7 +571,6 @@ int Quiescence(Board *pos, int alpha, int beta) {
         }
     }
     
-    int oldAlpha = alpha;
     int bestScore = score;
     Move bestMove = bestMoveTT;
     int legalMoves = 0;
@@ -624,8 +624,9 @@ int Quiescence(Board *pos, int alpha, int beta) {
     if (bestScore >= beta) flag = 2; // Lower bound
     else if (bestScore > oldAlpha) flag = 0; // Exact
     
-    StoreTT(pos->posKey, 0, bestScore, flag, bestMove, pos->ply);
-    return alpha;
+    int ttScore = (flag == 1) ? alpha : bestScore;
+    StoreTT(pos->posKey, 0, ttScore, flag, bestMove, pos->ply);
+    return (bestScore > alpha) ? bestScore : alpha;
 }
 
 int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv) {
