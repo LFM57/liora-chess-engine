@@ -4,6 +4,7 @@
 int PvArray[MAX_DEPTH];
 int History[2][64][64];
 Move KillerMoves[MAX_DEPTH][2];
+int EvalStack[MAX_DEPTH];
 TT TranspositionTable;
 _Static_assert(sizeof(TTEntry) == 16, "TTEntry must be 16 bytes");
 uint8_t TTAge = 0;
@@ -634,6 +635,15 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         bestMoveTT.to = tte->move_to;
         bestMoveTT.promoted = tte->move_prom;
     }
+
+    int ttMoveIsTactical = 0;
+    if (bestMoveTT.from != NO_SQ) {
+        if (bestMoveTT.promoted != EMPTY || 
+            pos->board[bestMoveTT.to] != EMPTY || 
+            (pos->enPas != NO_SQ && bestMoveTT.to == pos->enPas && (pos->board[bestMoveTT.from] % 6 == P))) {
+            ttMoveIsTactical = 1;
+        }
+    }
     
     // Vérification anti-Zugzwang (on s'assure qu'il reste autre chose que des Pions)
     int has_major_pieces = 0;
@@ -647,6 +657,12 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     int static_eval = -INF;
     if (!inCheck) {
         static_eval = Evaluate(pos);
+    }
+    EvalStack[pos->ply] = static_eval;
+
+    int improving = 0;
+    if (!inCheck && pos->ply >= 2 && EvalStack[pos->ply - 2] != -INF) {
+        improving = (static_eval > EvalStack[pos->ply - 2]);
     }
 
     // Reverse Futility Pruning (retour propre de beta)
@@ -801,6 +817,11 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                 reduction = LmrTable[d][m];
 
                 if (isPvNode) reduction--;
+                else reduction++;
+
+                if (!improving) reduction++;
+
+                if (ttMoveIsTactical) reduction++;
 
                 if ((move.from == KillerMoves[pos->ply][0].from && move.to == KillerMoves[pos->ply][0].to) ||
                     (move.from == KillerMoves[pos->ply][1].from && move.to == KillerMoves[pos->ply][1].to)) {
@@ -894,8 +915,9 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     // CRITICAL: Reset search tree ply to 0 at the root of every search!
     pos->ply = 0;
 
-    // Reset killer moves between positions
+    // Reset killer moves and eval stack between positions
     memset(KillerMoves, 0, sizeof(KillerMoves));
+    memset(EvalStack, 0, sizeof(EvalStack));
 
     // Scale history scores down between searches to give priority to recent cutoffs
     for (int s = 0; s < 2; s++)
