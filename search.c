@@ -492,7 +492,7 @@ int SEE(const Board *pos, Move move, int threshold) {
         side ^= 1;
     }
 
-    int r[32];
+    int r[33];
     r[num_captures] = 0;
     for (int k = num_captures - 1; k >= 1; k--) {
         int score = captured_val[k] - r[k + 1];
@@ -814,19 +814,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         int tempS = moveScores[i]; moveScores[i] = moveScores[maxI]; moveScores[maxI] = tempS;
         
         Move move = moves[i];
-        
-        // SEE Pruning
-        if (!isPvNode && !inCheck && movesSearched > 0 && depth <= 6) {
-            if (move.capture == EMPTY && move.promoted == EMPTY) {
-                if (!SEE(pos, move, -50 * depth)) {
-                    continue;
-                }
-            } else {
-                if (!SEE(pos, move, -90 * depth * depth)) {
-                    continue;
-                }
-            }
-        }
+        int isKiller = (move.from == KillerMoves[pos->ply][0].from && move.to == KillerMoves[pos->ply][0].to) ||
+                       (move.from == KillerMoves[pos->ply][1].from && move.to == KillerMoves[pos->ply][1].to);
 
         if(!MakeMove(pos, move)) continue;
         
@@ -850,6 +839,17 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                 continue;
             }
         }
+
+        // SEE Pruning
+        if (!isPvNode && !inCheck && !givesCheck && !isKiller && movesSearched > 0 && depth <= 6) {
+            int seeThreshold = (move.capture == EMPTY && move.promoted == EMPTY)
+                             ? (-60 * depth) : (-90 * depth * depth);
+            TakeMove(pos, move);
+            if (!SEE(pos, move, seeThreshold)) {
+                continue;
+            }
+            MakeMove(pos, move);
+        }
         
         movesSearched++;
         childPv[0].from = NO_SQ;
@@ -872,8 +872,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
 
                 if (ttMoveIsTactical) reduction++;
 
-                if ((move.from == KillerMoves[pos->ply][0].from && move.to == KillerMoves[pos->ply][0].to) ||
-                    (move.from == KillerMoves[pos->ply][1].from && move.to == KillerMoves[pos->ply][1].to)) {
+                if (isKiller) {
                     reduction--;
                 }
 
