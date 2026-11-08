@@ -806,6 +806,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     Move bestMove = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     int flag = 1; // Alpha
     
+    Move quietMovesSearched[MAX_MOVES];
+    int quietCount = 0;
+    
     Move childPv[MAX_DEPTH];
     
     for(int i=0; i<count; ++i) {
@@ -860,6 +863,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         }
         
         movesSearched++;
+        if (move.capture == EMPTY && move.promoted == EMPTY) {
+            quietMovesSearched[quietCount++] = move;
+        }
         childPv[0].from = NO_SQ;
         
         int score;
@@ -884,7 +890,10 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                     reduction--;
                 }
 
-                reduction -= History[pos->side][move.from][move.to] / 2048;
+                int histReduction = History[pos->side][move.from][move.to] / 4096;
+                if (histReduction > 2) histReduction = 2;
+                if (histReduction < -2) histReduction = -2;
+                reduction -= histReduction;
 
                 if (reduction < 0) reduction = 0;
                 if (reduction > depth - 2) reduction = depth - 2;
@@ -939,11 +948,10 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                         int cur = History[pos->side][move.from][move.to];
                         History[pos->side][move.from][move.to] = cur + bonus - (cur * bonus / 16384);
                         
-                        for (int k = 0; k < i; k++) {
-                            if (moves[k].capture == EMPTY) {
-                                int c = History[pos->side][moves[k].from][moves[k].to];
-                                History[pos->side][moves[k].from][moves[k].to] = c - bonus - (c * bonus / 16384);
-                            }
+                        for (int k = 0; k < quietCount; k++) {
+                            if (quietMovesSearched[k].from == move.from && quietMovesSearched[k].to == move.to) continue;
+                            int c = History[pos->side][quietMovesSearched[k].from][quietMovesSearched[k].to];
+                            History[pos->side][quietMovesSearched[k].from][quietMovesSearched[k].to] = c - bonus - (c * bonus / 16384);
                         }
                     }
                     flag = 2; // Beta
