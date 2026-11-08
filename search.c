@@ -326,7 +326,7 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
     else if (score < -30000) tt_score = -30000;
     target->score = (int16_t)tt_score;
     
-    if (move.from != NO_SQ) {
+    if (move.from != NO_SQ && !(flag == 1 && target->move_from != NO_SQ)) {
         target->move_from = move.from;
         target->move_to = move.to;
         target->move_prom = move.promoted;
@@ -679,7 +679,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     }
 
     // Internal Iterative Reduction (IIR)
-    if (bestMoveTT.from == NO_SQ && depth >= 4) {
+    if (isPvNode && bestMoveTT.from == NO_SQ && depth >= 5) {
         depth--;
     }
 
@@ -716,6 +716,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     if (!isPvNode && !inCheck && depth <= 7 && allow_null) {
         int margin = 85 * depth - (improving ? 35 : 0);
         if (static_eval - margin >= beta) {
+            StoreTT(pos->posKey, depth, beta, 2, bestMoveTT, pos->ply);
             return beta;
         }
     }
@@ -758,7 +759,10 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         pos->posKey = savedKey;
         
         if(StopSearch) return 0;
-        if(val >= beta) return beta;
+        if(val >= beta) {
+            StoreTT(pos->posKey, depth, beta, 2, bestMoveTT, pos->ply);
+            return beta;
+        }
     }
     
     Move moves[MAX_MOVES];
@@ -904,8 +908,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         
         if(score > bestScore) {
             bestScore = score;
-            bestMove = move;
             if(score > alpha) {
+                bestMove = move;
                 alpha = score;
                 flag = 0; // Exact
                 
