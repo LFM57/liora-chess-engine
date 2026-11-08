@@ -835,9 +835,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
             }
         }
         
-        // Forward Futility Pruning
-        if (!isPvNode && !inCheck && !givesCheck && movesSearched > 0 && depth <= 5 && move.capture == EMPTY && move.promoted == EMPTY) {
-            int futilityMargin = 80 * depth;
+        // Forward Futility Pruning (depth <= 3, reasonable margin, spare killers)
+        if (!isPvNode && !inCheck && !givesCheck && movesSearched > 0 && depth <= 3 && !isKiller && move.capture == EMPTY && move.promoted == EMPTY) {
+            int futilityMargin = 100 + 100 * depth;
             if (static_eval + futilityMargin <= alpha) {
                 TakeMove(pos, move);
                 continue;
