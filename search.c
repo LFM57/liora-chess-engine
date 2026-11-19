@@ -713,8 +713,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     }
 
     // Reverse Futility Pruning (RFP)
-    if (!isPvNode && !inCheck && depth <= 7 && allow_null && abs(beta) < MATE_SCORE - MAX_DEPTH) {
-        int margin = 85 * depth - (improving ? 35 : 0);
+    if (!isPvNode && !inCheck && depth <= 5 && allow_null && abs(beta) < MATE_SCORE - MAX_DEPTH) {
+        int margin = 120 * depth - (improving && depth > 1 ? 40 : 0);
         if (static_eval - margin >= beta) {
             return beta;
         }
