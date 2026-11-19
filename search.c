@@ -781,7 +781,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     int moveScores[MAX_MOVES];
     for(int i=0; i<count; ++i) {
         moveScores[i] = 0;
-        if(moves[i].from == bestMoveTT.from && moves[i].to == bestMoveTT.to) moveScores[i] = 2000000;
+        if(moves[i].from == bestMoveTT.from && moves[i].to == bestMoveTT.to && moves[i].promoted == bestMoveTT.promoted) moveScores[i] = 2000000;
         else if(moves[i].promoted != EMPTY) moveScores[i] = 150000 + moves[i].promoted;
         else if(moves[i].capture != EMPTY) {
             int type = GetPieceAt(pos, moves[i].from, pos->side);
