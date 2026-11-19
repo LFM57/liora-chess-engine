@@ -716,7 +716,6 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     if (!isPvNode && !inCheck && depth <= 7 && allow_null && abs(beta) < MATE_SCORE - MAX_DEPTH) {
         int margin = 85 * depth - (improving ? 35 : 0);
         if (static_eval - margin >= beta) {
-            StoreTT(pos->posKey, depth, beta, 2, bestMoveTT, pos->ply);
             return beta;
         }
     }
@@ -760,7 +759,6 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         
         if(StopSearch) return 0;
         if(val >= beta) {
-            StoreTT(pos->posKey, depth, beta, 2, bestMoveTT, pos->ply);
             return beta;
         }
     }
