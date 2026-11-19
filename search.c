@@ -282,7 +282,7 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
     
     if (target) {
         // If entry exists and is from the same search with greater depth, don't overwrite with shallower
-        if (target->age == TTAge && target->depth > depth && flag != 0) {
+        if (target->age == TTAge && target->depth > depth && (flag != 0 || depth == 0)) {
             if (move.from != NO_SQ && target->move_from == NO_SQ) {
                 target->move_from = move.from;
                 target->move_to = move.to;
