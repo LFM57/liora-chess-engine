@@ -947,9 +947,11 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                 
                 if(alpha >= beta) {
                     // Store Killer / History
-                    if(move.capture == EMPTY) {
-                        KillerMoves[pos->ply][1] = KillerMoves[pos->ply][0];
-                        KillerMoves[pos->ply][0] = move;
+                    if(move.capture == EMPTY && move.promoted == EMPTY) {
+                        if (move.from != KillerMoves[pos->ply][0].from || move.to != KillerMoves[pos->ply][0].to) {
+                            KillerMoves[pos->ply][1] = KillerMoves[pos->ply][0];
+                            KillerMoves[pos->ply][0] = move;
+                        }
                         
                         // Clamped History Update to prevent table overflow & order inversions
                         int bonus = depth * depth;
