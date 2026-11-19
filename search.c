@@ -303,7 +303,7 @@ void StoreTT(U64 key, int depth, int score, int flag, Move move, int ply) {
         if (!target) {
             int worstPriority = 1000000;
             for (int i = 0; i < TT_CLUSTER_SIZE; ++i) {
-                int ageDiff = (int)TTAge - (int)cluster->entries[i].age;
+                int ageDiff = (int)(uint8_t)(TTAge - cluster->entries[i].age);
                 int priority = (int)cluster->entries[i].depth - (ageDiff * 4);
                 if (priority < worstPriority) {
                     worstPriority = priority;
