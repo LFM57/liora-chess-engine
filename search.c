@@ -803,6 +803,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     // Search Loop
     int bestScore = -INF;
     int movesSearched = 0;
+    int movesPruned = 0;
     Move bestMove = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     int flag = 1; // Alpha
     
@@ -836,6 +837,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
             if (depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
                 int lmpThreshold = 3 + 2 * depth * depth; 
                 if (movesSearched >= lmpThreshold) {
+                    movesPruned = 1;
                     TakeMove(pos, move);
                     continue;
                 }
@@ -845,6 +847,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
             if (depth <= 3 && !isKiller && move.capture == EMPTY && move.promoted == EMPTY) {
                 int futilityMargin = 100 + 100 * depth;
                 if (static_eval + futilityMargin <= alpha) {
+                    movesPruned = 1;
                     TakeMove(pos, move);
                     continue;
                 }
@@ -856,6 +859,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                                  ? (-60 * depth) : (-90 * depth * depth);
                 TakeMove(pos, move);
                 if (!SEE(pos, move, seeThreshold)) {
+                    movesPruned = 1;
                     continue;
                 }
                 MakeMove(pos, move);
@@ -966,8 +970,9 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         return 0; // Stalemate
     }
     
-    StoreTT(pos->posKey, depth, bestScore, flag, bestMove, pos->ply);
-    return bestScore;
+    int ttScore = (flag == 1 && movesPruned && bestScore < alpha) ? alpha : bestScore;
+    StoreTT(pos->posKey, depth, ttScore, flag, bestMove, pos->ply);
+    return ttScore;
 }
 
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime) {
