@@ -823,45 +823,48 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         int isKiller = (move.from == KillerMoves[pos->ply][0].from && move.to == KillerMoves[pos->ply][0].to) ||
                        (move.from == KillerMoves[pos->ply][1].from && move.to == KillerMoves[pos->ply][1].to);
 
+        int canPrune = !isPvNode && !inCheck && movesSearched > 0 &&
+                       bestScore > -MATE_SCORE + MAX_DEPTH && abs(alpha) < MATE_SCORE - MAX_DEPTH;
+        int lmpPrune = 0;
+        int futilityPrune = 0;
+        int seePrune = 0;
+
+        if (canPrune) {
+            // LMP
+            if (depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
+                int lmpThreshold = 3 + 2 * depth * depth;
+                if (movesSearched >= lmpThreshold) {
+                    lmpPrune = 1;
+                }
+            }
+
+            // Forward Futility Pruning (depth <= 3, reasonable margin, spare killers)
+            if (!lmpPrune && depth <= 3 && !isKiller && move.capture == EMPTY && move.promoted == EMPTY) {
+                int futilityMargin = 100 + 100 * depth;
+                if (static_eval + futilityMargin <= alpha) {
+                    futilityPrune = 1;
+                }
+            }
+
+            // SEE Pruning (quadratic for quiets, linear for captures, exclude promotions)
+            if (!lmpPrune && !futilityPrune && depth <= 5 && !isKiller && move.promoted == EMPTY) {
+                int seeThreshold = (move.capture == EMPTY)
+                                 ? (-20 * depth * depth) : (-100 * depth);
+                if (!SEE(pos, move, seeThreshold)) {
+                    seePrune = 1;
+                }
+            }
+        }
+
         if(!MakeMove(pos, move)) continue;
         
         // Détecter si le coup joué donne échec
         int givesCheck = SqAttacked(pos->king_sq[pos->side], (pos->side ^ 1), pos);
         
-        if (!isPvNode && !inCheck && !givesCheck && movesSearched > 0 &&
-            bestScore > -MATE_SCORE + MAX_DEPTH && abs(alpha) < MATE_SCORE - MAX_DEPTH) {
-
-            // LMP : On n'élague que si le coup ne donne PAS échec
-            if (depth <= 3 && move.capture == EMPTY && move.promoted == EMPTY) {
-                int lmpThreshold = 3 + 2 * depth * depth; 
-                if (movesSearched >= lmpThreshold) {
-                    movesPruned = 1;
-                    TakeMove(pos, move);
-                    continue;
-                }
-            }
-            
-            // Forward Futility Pruning (depth <= 3, reasonable margin, spare killers)
-            if (depth <= 3 && !isKiller && move.capture == EMPTY && move.promoted == EMPTY) {
-                int futilityMargin = 100 + 100 * depth;
-                if (static_eval + futilityMargin <= alpha) {
-                    movesPruned = 1;
-                    TakeMove(pos, move);
-                    continue;
-                }
-            }
-
-            // SEE Pruning
-            if (depth <= 6 && !isKiller) {
-                int seeThreshold = (move.capture == EMPTY && move.promoted == EMPTY)
-                                 ? (-60 * depth) : (-90 * depth * depth);
-                TakeMove(pos, move);
-                if (!SEE(pos, move, seeThreshold)) {
-                    movesPruned = 1;
-                    continue;
-                }
-                MakeMove(pos, move);
-            }
+        if (!givesCheck && (lmpPrune || futilityPrune || seePrune)) {
+            movesPruned = 1;
+            TakeMove(pos, move);
+            continue;
         }
         
         movesSearched++;
