@@ -917,8 +917,8 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
                 score = -Negamax(pos, depth - 1, -alpha - 1, -alpha, 1, childPv);
             }
             
-            // Step 3: Full window search if move beat alpha (always required for PV-nodes to get an exact PV)
-            if(score > alpha && (isPvNode || score < beta)) {
+            // Step 3: Full window search if move beat alpha and did not already fail high
+            if(score > alpha && score < beta) {
                 childPv[0].from = NO_SQ;
                 score = -Negamax(pos, depth - 1, -beta, -alpha, 1, childPv);
             }
