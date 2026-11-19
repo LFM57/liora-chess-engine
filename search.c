@@ -724,8 +724,11 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     if(!isPvNode && allow_null && pos->ply > 0 && depth >= 3 && !inCheck && has_major_pieces && static_eval >= beta && abs(beta) < MATE_SCORE - MAX_DEPTH && pos->hisPly < 1023) {
         // Make Null
         int savedEnPas = pos->enPas;
+        int savedFifty = pos->fiftyMove;
         U64 savedKey = pos->posKey;
         
+        pos->historyPosKey[pos->hisPly] = pos->posKey;
+        pos->fiftyMove = 0;
         pos->side ^= 1;
         EvalStack[pos->ply] = -INF;
         pos->ply++;
@@ -755,6 +758,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         EvalStack[pos->ply] = static_eval;
         pos->hisPly--;
         pos->enPas = savedEnPas;
+        pos->fiftyMove = savedFifty;
         pos->posKey = savedKey;
         
         if(StopSearch) return 0;
