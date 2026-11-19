@@ -636,7 +636,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     if(StopSearch) return 0;
     Nodes++;
     
-    if(IsRepetition(pos) || pos->fiftyMove >= 100) return 0;
+    if(pos->ply > 0 && (IsRepetition(pos) || pos->fiftyMove >= 100)) return 0;
     
     // Check Extension (étendue à tous les nœuds pour ne pas rater les combinaisons)
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side^1), pos);
