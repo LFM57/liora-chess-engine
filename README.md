@@ -6,7 +6,7 @@
 
 **Liora** is a high-performance, open-source chess engine written in C. It supports the standard Universal Chess Interface (UCI) protocol and can be integrated with popular chess GUIs such as Cutechess, Arena, BanksiaGUI, and Nibbler.
 
-Flagship version, [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.0_F), has an Elo of $2614 \pm 28.9$, calculated from around 1k games against Stockfish 19 (2350 Elo). 
+Flagship version, [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.0_F), has an official Elo of $2569 \pm 18$, see [CCRL Blitz Rating](https://computerchess.org.uk/404/cgi/engine_details.cgi?eng=Liora%2011.0%20F%2064-bit) for more details 
 
 ---
 
