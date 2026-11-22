@@ -112,10 +112,10 @@ void ParseOption(char *line) {
                 UseNNUE = 1;
                 InitNNUE(EvalFile);
             }
-            pos.accumStack[pos.hisPly].computed[WHITE] = 0;
-            pos.accumStack[pos.hisPly].computed[BLACK] = 0;
-            pos.accumStack[0].computed[WHITE] = 0;
-            pos.accumStack[0].computed[BLACK] = 0;
+            for (int i = 0; i <= pos.hisPly; ++i) {
+                pos.accumStack[i].computed[WHITE] = 0;
+                pos.accumStack[i].computed[BLACK] = 0;
+            }
         }
     }
     // Parse: setoption name EvalFile value <path>
@@ -132,10 +132,10 @@ void ParseOption(char *line) {
             if(UseNNUE) {
                 InitNNUE(EvalFile);
             }
-            pos.accumStack[pos.hisPly].computed[WHITE] = 0;
-            pos.accumStack[pos.hisPly].computed[BLACK] = 0;
-            pos.accumStack[0].computed[WHITE] = 0;
-            pos.accumStack[0].computed[BLACK] = 0;
+            for (int i = 0; i <= pos.hisPly; ++i) {
+                pos.accumStack[i].computed[WHITE] = 0;
+                pos.accumStack[i].computed[BLACK] = 0;
+            }
         }
     }
 }

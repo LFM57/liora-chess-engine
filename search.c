@@ -739,9 +739,13 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
             pos->enPas = NO_SQ;
         }
         
-        // FIX: Copy accumulator state to new hisPly so NNUE never reads uninitialized memory
+        // Record lazy no-op delta for null move instead of eagerly copying accumulator
         if (NNUE_Loaded) {
-            pos->accumStack[pos->hisPly] = pos->accumStack[pos->hisPly - 1];
+            Accumulator *acc = &pos->accumStack[pos->hisPly];
+            acc->delta.numSub = 0;
+            acc->delta.numAdd = 0;
+            acc->computed[WHITE] = 0;
+            acc->computed[BLACK] = 0;
         }
         
         Move nullPv[MAX_DEPTH]; // Dummy
@@ -990,6 +994,12 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     
     // CRITICAL: Reset search tree ply to 0 at the root of every search!
     pos->ply = 0;
+
+    // Warm root accumulator once so child plies always have a computed anchor
+    if (NNUE_Loaded) {
+        EnsureAccumulatorUpdated(pos, WHITE);
+        EnsureAccumulatorUpdated(pos, BLACK);
+    }
 
     // Reset killer moves and eval stack between positions
     memset(KillerMoves, 0, sizeof(KillerMoves));
@@ -1292,6 +1302,10 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
             // --- ITERATIVE DEEPENING (Depth 1 to searchDepth) ---
             // Essential for move ordering, TT population, and performance
+            if (NNUE_Loaded) {
+                EnsureAccumulatorUpdated(&gPos, WHITE);
+                EnsureAccumulatorUpdated(&gPos, BLACK);
+            }
             Nodes = 0;
             for (int d = 1; d <= searchDepth; ++d) {
                 pvLine[0].from = NO_SQ;

@@ -62,62 +62,108 @@ void RefreshAccumulator(Accumulator *acc, const struct Board *pos, int side) {
     acc->computed[side] = 1;
 }
 
-// Incrementally update accumulator from parent ply
-void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const struct Board *pos,
-                           int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece) {
-    (void)pos;
+// Fused incremental update: loads directly from prevAcc and stores directly into nextAcc
+static void ApplyAccumulatorDelta(Accumulator *nextAcc, const Accumulator *prevAcc, int side) {
+    const AccumulatorDelta *d = &nextAcc->delta;
+    int16_t *dst = nextAcc->accumulation[side];
+    const int16_t *src = prevAcc->accumulation[side];
 
-    for (int side = 0; side <= 1; ++side) {
-        if (!prevAcc->computed[side]) {
-            nextAcc->computed[side] = 0;
-            continue;
-        }
-
-        if (nextAcc != prevAcc) {
-            memcpy(nextAcc->accumulation[side], prevAcc->accumulation[side], NNUE_L1 * sizeof(int16_t));
-        }
-
-        int subFeat = GetFeatureIndex(movedPiece, from, side);
-        int addFeat = GetFeatureIndex((promPiece != EMPTY) ? promPiece : movedPiece, to, side);
-        int capFeat = (capturedPiece != EMPTY) ? GetFeatureIndex(capturedPiece, capSq, side) : -1;
+    if (d->numSub == 1 && d->numAdd == 1) {
+        int sub0 = GetFeatureIndex(d->subPiece[0], d->subSq[0], side);
+        int add0 = GetFeatureIndex(d->addPiece[0], d->addSq[0], side);
+        const int16_t *w_sub0 = &FeatureWeights[sub0 * NNUE_L1];
+        const int16_t *w_add0 = &FeatureWeights[add0 * NNUE_L1];
 
 #if defined(__AVX2__)
         for (int i = 0; i < NNUE_L1; i += 16) {
-            __m256i acc_vec = _mm256_loadu_si256((__m256i*)&nextAcc->accumulation[side][i]);
-
-            if (subFeat >= 0) {
-                __m256i w_sub = _mm256_loadu_si256((__m256i*)&FeatureWeights[subFeat * NNUE_L1 + i]);
-                acc_vec = _mm256_sub_epi16(acc_vec, w_sub);
-            }
-            if (capFeat >= 0) {
-                __m256i w_cap = _mm256_loadu_si256((__m256i*)&FeatureWeights[capFeat * NNUE_L1 + i]);
-                acc_vec = _mm256_sub_epi16(acc_vec, w_cap);
-            }
-            if (addFeat >= 0) {
-                __m256i w_add = _mm256_loadu_si256((__m256i*)&FeatureWeights[addFeat * NNUE_L1 + i]);
-                acc_vec = _mm256_add_epi16(acc_vec, w_add);
-            }
-
-            _mm256_storeu_si256((__m256i*)&nextAcc->accumulation[side][i], acc_vec);
+            __m256i acc = _mm256_loadu_si256((const __m256i*)&src[i]);
+            acc = _mm256_sub_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_sub0[i]));
+            acc = _mm256_add_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_add0[i]));
+            _mm256_storeu_si256((__m256i*)&dst[i], acc);
         }
 #else
         for (int i = 0; i < NNUE_L1; ++i) {
-            if (subFeat >= 0) nextAcc->accumulation[side][i] -= FeatureWeights[subFeat * NNUE_L1 + i];
-            if (capFeat >= 0) nextAcc->accumulation[side][i] -= FeatureWeights[capFeat * NNUE_L1 + i];
-            if (addFeat >= 0) nextAcc->accumulation[side][i] += FeatureWeights[addFeat * NNUE_L1 + i];
+            dst[i] = src[i] - w_sub0[i] + w_add0[i];
         }
 #endif
+    } else if (d->numSub == 2 && d->numAdd == 1) {
+        int sub0 = GetFeatureIndex(d->subPiece[0], d->subSq[0], side);
+        int sub1 = GetFeatureIndex(d->subPiece[1], d->subSq[1], side);
+        int add0 = GetFeatureIndex(d->addPiece[0], d->addSq[0], side);
+        const int16_t *w_sub0 = &FeatureWeights[sub0 * NNUE_L1];
+        const int16_t *w_sub1 = &FeatureWeights[sub1 * NNUE_L1];
+        const int16_t *w_add0 = &FeatureWeights[add0 * NNUE_L1];
 
-        nextAcc->computed[side] = 1;
+#if defined(__AVX2__)
+        for (int i = 0; i < NNUE_L1; i += 16) {
+            __m256i acc = _mm256_loadu_si256((const __m256i*)&src[i]);
+            acc = _mm256_sub_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_sub0[i]));
+            acc = _mm256_sub_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_sub1[i]));
+            acc = _mm256_add_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_add0[i]));
+            _mm256_storeu_si256((__m256i*)&dst[i], acc);
+        }
+#else
+        for (int i = 0; i < NNUE_L1; ++i) {
+            dst[i] = src[i] - w_sub0[i] - w_sub1[i] + w_add0[i];
+        }
+#endif
+    } else if (d->numSub == 2 && d->numAdd == 2) {
+        int sub0 = GetFeatureIndex(d->subPiece[0], d->subSq[0], side);
+        int sub1 = GetFeatureIndex(d->subPiece[1], d->subSq[1], side);
+        int add0 = GetFeatureIndex(d->addPiece[0], d->addSq[0], side);
+        int add1 = GetFeatureIndex(d->addPiece[1], d->addSq[1], side);
+        const int16_t *w_sub0 = &FeatureWeights[sub0 * NNUE_L1];
+        const int16_t *w_sub1 = &FeatureWeights[sub1 * NNUE_L1];
+        const int16_t *w_add0 = &FeatureWeights[add0 * NNUE_L1];
+        const int16_t *w_add1 = &FeatureWeights[add1 * NNUE_L1];
+
+#if defined(__AVX2__)
+        for (int i = 0; i < NNUE_L1; i += 16) {
+            __m256i acc = _mm256_loadu_si256((const __m256i*)&src[i]);
+            acc = _mm256_sub_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_sub0[i]));
+            acc = _mm256_sub_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_sub1[i]));
+            acc = _mm256_add_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_add0[i]));
+            acc = _mm256_add_epi16(acc, _mm256_loadu_si256((const __m256i*)&w_add1[i]));
+            _mm256_storeu_si256((__m256i*)&dst[i], acc);
+        }
+#else
+        for (int i = 0; i < NNUE_L1; ++i) {
+            dst[i] = src[i] - w_sub0[i] - w_sub1[i] + w_add0[i] + w_add1[i];
+        }
+#endif
+    } else {
+        // Null move (numSub == 0 && numAdd == 0)
+        memcpy(dst, src, NNUE_L1 * sizeof(int16_t));
+    }
+
+    nextAcc->computed[side] = 1;
+}
+
+// Lazily materialize accumulator for `side` by walking back to nearest computed ancestor
+void EnsureAccumulatorUpdated(const struct Board *pos, int side) {
+    Accumulator *stack = (Accumulator *)pos->accumStack;
+    int cur = pos->hisPly;
+    if (stack[cur].computed[side]) return;
+
+    int anc = cur;
+    while (anc > 0 && !stack[anc].computed[side] && (cur - anc) <= 8) {
+        anc--;
+    }
+
+    if (stack[anc].computed[side]) {
+        for (int p = anc + 1; p <= cur; ++p) {
+            ApplyAccumulatorDelta(&stack[p], &stack[p - 1], side);
+        }
+    } else {
+        RefreshAccumulator(&stack[cur], pos, side);
     }
 }
 
 // Forward Pass (Inference with SCReLU)
 int EvaluateNNUE(const struct Board *pos) {
-    Accumulator *acc = (Accumulator*)&pos->accumStack[pos->hisPly];
-
-    if (!acc->computed[WHITE]) RefreshAccumulator(acc, pos, WHITE);
-    if (!acc->computed[BLACK]) RefreshAccumulator(acc, pos, BLACK);
+    EnsureAccumulatorUpdated(pos, WHITE);
+    EnsureAccumulatorUpdated(pos, BLACK);
+    const Accumulator *acc = &pos->accumStack[pos->hisPly];
 
     int us = pos->side;
     int them = pos->side ^ 1;
@@ -282,35 +328,3 @@ void InitNNUE(const char *filename) {
     DisableNNUE();
 }
 
-// Updates the moved Rook in both perspectives during castling
-void UpdateAccumulatorCastlingRook(Accumulator *acc, const struct Board *pos, int castlingSide, int rFrom, int rTo) {
-    (void)pos;
-    int rPiece = (castlingSide == WHITE) ? R : r;
-
-    for (int side = 0; side <= 1; ++side) {
-        if (!acc->computed[side]) continue;
-
-        int subFeat = GetFeatureIndex(rPiece, rFrom, side);
-        int addFeat = GetFeatureIndex(rPiece, rTo, side);
-
-#if defined(__AVX2__)
-        for (int i = 0; i < NNUE_L1; i += 16) {
-            __m256i acc_vec = _mm256_loadu_si256((__m256i*)&acc->accumulation[side][i]);
-            if (subFeat >= 0) {
-                __m256i w_sub = _mm256_loadu_si256((__m256i*)&FeatureWeights[subFeat * NNUE_L1 + i]);
-                acc_vec = _mm256_sub_epi16(acc_vec, w_sub);
-            }
-            if (addFeat >= 0) {
-                __m256i w_add = _mm256_loadu_si256((__m256i*)&FeatureWeights[addFeat * NNUE_L1 + i]);
-                acc_vec = _mm256_add_epi16(acc_vec, w_add);
-            }
-            _mm256_storeu_si256((__m256i*)&acc->accumulation[side][i], acc_vec);
-        }
-#else
-        for (int i = 0; i < NNUE_L1; ++i) {
-            if (subFeat >= 0) acc->accumulation[side][i] -= FeatureWeights[subFeat * NNUE_L1 + i];
-            if (addFeat >= 0) acc->accumulation[side][i] += FeatureWeights[addFeat * NNUE_L1 + i];
-        }
-#endif
-    }
-}

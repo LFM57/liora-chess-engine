@@ -542,10 +542,6 @@ void ParseFen(char *fen, Board *pos) {
     pos->pawns[BOTH] = pos->pawns[WHITE] | pos->pawns[BLACK];
     pos->posKey = GeneratePosKey(pos);
     InitEval(pos);
-    if (NNUE_Loaded) {
-        RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, WHITE);
-        RefreshAccumulator(&pos->accumStack[pos->hisPly], pos, BLACK);
-    }
 }
 
 // Move Gen Helpers
@@ -1030,21 +1026,41 @@ int MakeMove(Board *pos, Move move) {
         return 0;
     }
     
-    // Update NNUE Accumulator for the new ply (only on legal moves)
+    // Record lazy NNUE accumulator delta for the new ply (only on legal moves)
     if (NNUE_Loaded) {
-        int capSq = to;
-        if (move.move_type == 1) capSq = (side == WHITE) ? to - 8 : to + 8;
-        UpdateAccumulatorMove(&pos->accumStack[pos->hisPly], &pos->accumStack[pos->hisPly - 1], pos,
-                              pType, from, to, move.capture, capSq, move.promoted);
+        Accumulator *acc = &pos->accumStack[pos->hisPly];
+        AccumulatorDelta *d = &acc->delta;
+        acc->computed[WHITE] = 0;
+        acc->computed[BLACK] = 0;
 
-        // If castling, update the moved Rook in the opponent's accumulator
-        if (move.move_type == 2) {
-            int rFrom = NO_SQ, rTo = NO_SQ;
+        int finalPiece = (move.promoted != EMPTY) ? move.promoted : pType;
+        d->subPiece[0] = (uint8_t)pType;
+        d->subSq[0]    = (uint8_t)from;
+        d->addPiece[0] = (uint8_t)finalPiece;
+        d->addSq[0]    = (uint8_t)to;
+
+        if (move.capture != EMPTY) {
+            int capSq = (move.move_type == 1) ? ((side == WHITE) ? to - 8 : to + 8) : to;
+            d->subPiece[1] = (uint8_t)move.capture;
+            d->subSq[1]    = (uint8_t)capSq;
+            d->numSub = 2;
+            d->numAdd = 1;
+        } else if (move.move_type == 2) {
+            int rPiece = (side == WHITE) ? R : r;
+            int rFrom = H1, rTo = F1;
             if (to == G1)      { rFrom = H1; rTo = F1; }
             else if (to == C1) { rFrom = A1; rTo = D1; }
             else if (to == G8) { rFrom = H8; rTo = F8; }
             else if (to == C8) { rFrom = A8; rTo = D8; }
-            UpdateAccumulatorCastlingRook(&pos->accumStack[pos->hisPly], pos, side, rFrom, rTo);
+            d->subPiece[1] = (uint8_t)rPiece;
+            d->subSq[1]    = (uint8_t)rFrom;
+            d->addPiece[1] = (uint8_t)rPiece;
+            d->addSq[1]    = (uint8_t)rTo;
+            d->numSub = 2;
+            d->numAdd = 2;
+        } else {
+            d->numSub = 1;
+            d->numAdd = 1;
         }
     }
     

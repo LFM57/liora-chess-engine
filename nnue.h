@@ -10,10 +10,21 @@
 #define NNUE_QB 64        // Output weight quantization scale
 #define NNUE_SCALE 400    // Centipawn output scale
 
+// Compact representation of board changes for lazy incremental accumulator updates
+typedef struct {
+    uint8_t numSub;
+    uint8_t numAdd;
+    uint8_t subPiece[2];
+    uint8_t subSq[2];
+    uint8_t addPiece[2];
+    uint8_t addSq[2];
+} AccumulatorDelta;
+
 // Accumulator storing the first layer outputs for both White and Black perspectives
 typedef struct {
     int16_t accumulation[2][NNUE_L1];
-    int computed[2]; // 1 if calculated, 0 if needs refresh
+    AccumulatorDelta delta;
+    uint8_t computed[2]; // 1 if calculated, 0 if dirty / needs lazy update or refresh
 } Accumulator;
 
 // Forward declaration of tagged struct
@@ -33,7 +44,6 @@ const void *GetEmbeddedNNUEData(void);
 size_t GetEmbeddedNNUESize(void);
 
 void RefreshAccumulator(Accumulator *acc, const struct Board *pos, int side);
-void UpdateAccumulatorMove(Accumulator *nextAcc, const Accumulator *prevAcc, const struct Board *pos, int movedPiece, int from, int to, int capturedPiece, int capSq, int promPiece);
-void UpdateAccumulatorCastlingRook(Accumulator *acc, const struct Board *pos, int castlingSide, int rFrom, int rTo);
+void EnsureAccumulatorUpdated(const struct Board *pos, int side);
 
 #endif
