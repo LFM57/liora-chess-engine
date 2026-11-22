@@ -12,6 +12,7 @@ import time
 import math
 import shutil
 import struct
+import argparse
 import numpy as np
 import torch
 import torch.nn as nn
@@ -271,8 +272,9 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
 
 
 class BinaryChessDataset(Dataset):
-    def __init__(self, bin_path):
-        self.data = np.memmap(bin_path, dtype=ENTRY_DTYPE, mode='r')
+    def __init__(self, bin_path, start=0, end=None):
+        mm = np.memmap(bin_path, dtype=ENTRY_DTYPE, mode='r')
+        self.data = mm[start:end]
 
     def __len__(self):
         return len(self.data)
@@ -366,50 +368,143 @@ def needs_bin_rebuild(txt_path, bin_path, force_rebuild=False):
     return False
 
 
-def main():
-    txt_path = "dataset.txt"
-    bin_path = "dataset.bin"
-    force_rebuild = ("--rebuild" in sys.argv) or ("--force" in sys.argv)
+def wdl_mse_loss(preds, targets):
+    return torch.mean((torch.sigmoid(preds) - targets) ** 2)
 
-    if needs_bin_rebuild(txt_path, bin_path, force_rebuild=force_rebuild):
+
+@torch.no_grad()
+def evaluate_validation(model, val_loader, criterion, device):
+    model.eval()
+    total_loss = 0.0
+    total_mse = 0.0
+    total_samples = 0
+
+    for w_f, b_f, sides, targets in val_loader:
+        w_f = w_f.to(device, non_blocking=True)
+        b_f = b_f.to(device, non_blocking=True)
+        sides = sides.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+
+        preds = model(w_f, b_f, sides).squeeze(-1)
+        bs = targets.size(0)
+        loss = criterion(preds, targets)
+        mse = torch.mean((torch.sigmoid(preds) - targets) ** 2)
+
+        total_loss += loss.item() * bs
+        total_mse += mse.item() * bs
+        total_samples += bs
+
+    if total_samples == 0:
+        return float("inf"), float("inf")
+    return total_loss / total_samples, total_mse / total_samples
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Train Liora (768->256)x2 SCReLU NNUE")
+    parser.add_argument("--data", default="dataset.txt", help="Input text dataset path")
+    parser.add_argument("--bin", default="dataset.bin", help="Memory-mapped binary dataset cache path")
+    parser.add_argument("--rebuild", "--force", dest="rebuild", action="store_true", help="Force rebuild of binary cache")
+    parser.add_argument("--epochs", type=int, default=20, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=8192, help="Training batch size")
+    parser.add_argument("--lr", type=float, default=1e-3, help="Initial learning rate")
+    parser.add_argument("--min-lr", type=float, default=1e-5, help="Minimum cosine-annealed learning rate")
+    parser.add_argument("--val-split", type=float, default=0.05, help="Contiguous validation split ratio (0 to disable)")
+    parser.add_argument("--loss", choices=["bce", "mse"], default="bce", help="Training loss: bce (default) or wdl mse")
+    parser.add_argument("--out-dir", default=".", help="Output directory for exported .nnue checkpoints")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    txt_path = args.data
+    bin_path = args.bin
+
+    if needs_bin_rebuild(txt_path, bin_path, force_rebuild=args.rebuild):
         if not os.path.exists(txt_path):
             print(f"Error: Neither valid {bin_path} nor {txt_path} found.")
             return
         convert_txt_to_bin(txt_path, bin_path)
 
+    os.makedirs(args.out_dir, exist_ok=True)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Training on device: {device}")
 
-    # Memory-mapped dataset (instant startup)
-    dataset = BinaryChessDataset(bin_path)
-    
-    # Batch size 8192 for maximum GPU utilization
-    BATCH_SIZE = 8192
+    # Contiguous game-level train/validation split (prevents same-game and mirror leakage)
+    full_len = os.path.getsize(bin_path) // ENTRY_DTYPE.itemsize
+    if full_len == 0:
+        print(f"Error: Binary dataset {bin_path} is empty.")
+        return
+
+    use_val = (args.val_split > 0.0 and full_len >= 20)
+    if use_val:
+        val_len = max(1, int(full_len * args.val_split))
+        split_idx = full_len - val_len
+        train_dataset = BinaryChessDataset(bin_path, start=0, end=split_idx)
+        val_dataset = BinaryChessDataset(bin_path, start=split_idx, end=full_len)
+    else:
+        train_dataset = BinaryChessDataset(bin_path)
+        val_dataset = None
+
+    batch_size = args.batch_size
     num_workers = min(4, os.cpu_count() or 1)
-    loader = DataLoader(
-        dataset,
-        batch_size=BATCH_SIZE,
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
         shuffle=True,
         collate_fn=fast_collate,
         num_workers=num_workers,
         pin_memory=(device.type == "cuda"),
         persistent_workers=(num_workers > 0)
     )
+    val_loader = None
+    if val_dataset is not None:
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=fast_collate,
+            num_workers=num_workers,
+            pin_memory=(device.type == "cuda"),
+            persistent_workers=(num_workers > 0)
+        )
 
     model = LioraNNUE().to(device)
-    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.95)
-    criterion = nn.BCEWithLogitsLoss()
+    # Drop weight decay on the small 768 embedding table and biases; regularize output weights only
+    optimizer = optim.AdamW(
+        [
+            {"params": [model.ft.weight, model.ft_bias, model.out.bias], "weight_decay": 0.0},
+            {"params": [model.out.weight], "weight_decay": 1e-4},
+        ],
+        lr=args.lr,
+    )
+    total_steps = max(1, args.epochs * len(train_loader))
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=args.min_lr)
+    criterion = nn.BCEWithLogitsLoss() if args.loss == "bce" else wdl_mse_loss
 
-    epochs = 20
-    print(f"\nStarting training on {len(dataset):,} positions ({len(loader)} batches/epoch)...")
+    epochs = args.epochs
+    best_val_loss = float("inf")
+    best_epoch = -1
+    default_nnue = os.path.join(args.out_dir, "liora.nnue")
+
+    if val_dataset is not None:
+        print(
+            f"\nStarting training ({args.loss.upper()} loss) on {len(train_dataset):,} train / "
+            f"{len(val_dataset):,} val positions ({len(train_loader)} batches/epoch)..."
+        )
+    else:
+        print(
+            f"\nStarting training ({args.loss.upper()} loss) on {len(train_dataset):,} positions "
+            f"({len(train_loader)} batches/epoch, validation disabled)..."
+        )
 
     for epoch in range(1, epochs + 1):
         total_loss = 0.0
+        total_samples = 0
         model.train()
         t0 = time.time()
 
-        for step, (w_f, b_f, sides, targets) in enumerate(loader, 1):
+        for step, (w_f, b_f, sides, targets) in enumerate(train_loader, 1):
             w_f = w_f.to(device, non_blocking=True)
             b_f = b_f.to(device, non_blocking=True)
             sides = sides.to(device, non_blocking=True)
@@ -420,27 +515,55 @@ def main():
             loss = criterion(preds, targets)
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
-            total_loss += loss.item()
+            bs = targets.size(0)
+            total_loss += loss.item() * bs
+            total_samples += bs
 
-            if step % 200 == 0 or step == len(loader):
-                elapsed = time.time() - t0
-                speed = (step * BATCH_SIZE) / elapsed
-                print(f"\rEpoch {epoch}/{epochs} | Step {step}/{len(loader)} | Loss: {loss.item():.5f} | {speed:,.0f} pos/sec", end="")
+            if step % 200 == 0 or step == len(train_loader):
+                elapsed = max(1e-6, time.time() - t0)
+                speed = total_samples / elapsed
+                print(
+                    f"\rEpoch {epoch}/{epochs} | Step {step}/{len(train_loader)} | "
+                    f"Loss: {loss.item():.5f} | {speed:,.0f} pos/sec",
+                    end="",
+                )
 
-        avg_loss = total_loss / len(loader)
+        avg_train_loss = total_loss / max(1, total_samples)
         epoch_time = time.time() - t0
-        current_lr = scheduler.get_last_lr()[0]
-        print(f"\nEpoch {epoch}/{epochs} Complete - Avg Loss: {avg_loss:.5f} - LR: {current_lr:.6f} - Time: {epoch_time:.1f}s")
+        current_lr = optimizer.param_groups[0]["lr"]
 
-        scheduler.step()
+        epoch_filename = os.path.join(args.out_dir, f"liora_{epoch}.nnue")
 
-        epoch_filename = f"liora_{epoch}.nnue"
-        export_to_nnue(model, epoch_filename)
-        shutil.copyfile(epoch_filename, "liora.nnue")
-        print("[+] Updated default network file: liora.nnue")
+        if val_loader is not None:
+            val_loss, val_mse = evaluate_validation(model, val_loader, criterion, device)
+            print(
+                f"\nEpoch {epoch}/{epochs} Complete - Train Loss: {avg_train_loss:.5f} - "
+                f"Val Loss: {val_loss:.5f} - Val WDL MSE: {val_mse:.5f} - "
+                f"LR: {current_lr:.6f} - Time: {epoch_time:.1f}s"
+            )
+            export_to_nnue(model, epoch_filename)
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_epoch = epoch
+                shutil.copyfile(epoch_filename, default_nnue)
+                print(f"[*] New best validation loss ({best_val_loss:.5f}) -> updated {default_nnue}")
+            else:
+                print(f"[!] Val loss did not improve (best: {best_val_loss:.5f} at epoch {best_epoch})")
+        else:
+            print(
+                f"\nEpoch {epoch}/{epochs} Complete - Train Loss: {avg_train_loss:.5f} - "
+                f"LR: {current_lr:.6f} - Time: {epoch_time:.1f}s"
+            )
+            export_to_nnue(model, epoch_filename)
+            shutil.copyfile(epoch_filename, default_nnue)
+            print(f"[+] Updated default network file: {default_nnue}")
 
-    print("\nTraining completed successfully! All checkpoints exported.")
+    if best_epoch > 0:
+        print(f"\nTraining completed! Best checkpoint: epoch {best_epoch} (Val Loss: {best_val_loss:.5f}) -> {default_nnue}")
+    else:
+        print("\nTraining completed successfully! All checkpoints exported.")
 
 
 if __name__ == "__main__":
