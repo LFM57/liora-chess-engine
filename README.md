@@ -93,8 +93,8 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c nnue_embed.c polyglot.c search.c -lm
 | :--- | :---: | :---: | :--- |
 | `Hash` | `spin` | `64` | Transposition table size in megabytes (1 to 4096 MB). |
 | `BookPath` | `string` | `<empty>` | Filepath to an external Polyglot opening book (`.bin`). |
-| `UseNNUE` | `check` | `false` | Enable NNUE evaluation when a compatible network is loaded. |
-| `EvalFile` | `string` | `<empty>` | Path to a `(768 -> 256)x2` SCReLU `.nnue` network (`<embedded>` if built with `EMBED_NNUE=1`). Falls back to HCE if missing. |
+| `UseNNUE` | `check` | `true` (if embedded) | Enable NNUE evaluation (`true` by default when built with `EMBED_NNUE=1`, `false` otherwise). |
+| `EvalFile` | `string` | `<embedded>` | Path to a `(768 -> 256)x2` SCReLU `.nnue` network (`<embedded>` when built with `EMBED_NNUE=1`, `<empty>` otherwise). Falls back to HCE if missing. |
 
 ## License
 

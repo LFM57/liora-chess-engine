@@ -152,9 +152,8 @@ int main() {
 
     if(HasEmbeddedNNUE()) {
         strncpy(EvalFile, "<embedded>", sizeof(EvalFile) - 1);
-        UseNNUE = 0;
-        DisableNNUE();
-        printf("info string internal NNUE detected but disabled (HCE is better)\n");
+        InitNNUE(EvalFile);
+        UseNNUE = NNUE_Loaded;
     } else {
         strncpy(EvalFile, "<empty>", sizeof(EvalFile) - 1);
         UseNNUE = 0;

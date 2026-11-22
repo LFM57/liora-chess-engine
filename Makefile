@@ -6,7 +6,7 @@ WIN_CFLAGS ?= -O3 -march=native -Wall -Wextra
 LDFLAGS = -lm
 WIN_LDFLAGS = -lm
 
-EMBED_NNUE ?= 0
+EMBED_NNUE ?= 1
 NNUE_FILE ?= ../NNUE Weights/Gen 5/liora.nnue
 
 ifeq ($(EMBED_NNUE),1)
