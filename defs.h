@@ -116,6 +116,7 @@ extern TT TranspositionTable;
 extern int NNUE_Loaded;
 extern int LimitStrength;
 extern int UciElo;
+extern uint64_t GameNoiseSeed;
 extern U64 SetMask[64];
 extern U64 ClearMask[64];
 extern U64 RankMask[8];
@@ -165,6 +166,7 @@ int Evaluate(const Board *pos);
 void InitTT(int mb);
 void ClearTT();
 long long GetTimeMs();
+void ReseedGameNoise(void);
 
 // polyglot
 extern char BookPath[512];

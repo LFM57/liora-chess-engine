@@ -215,6 +215,7 @@ int main() {
 #else
     srand((unsigned int)(time(NULL) ^ (getpid() << 16)));
 #endif
+    ReseedGameNoise();
 
     if(HasEmbeddedNNUE()) {
         strncpy(EvalFile, "<embedded>", sizeof(EvalFile) - 1);
@@ -246,6 +247,7 @@ int main() {
         if(line[0] == '\n' || line[0] == '\r') continue;
         if(!strncmp(line, "ucinewgame", 10)) {
             ClearTT();
+            ReseedGameNoise();
             ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &pos);
         } else if(!strncmp(line, "uci", 3) && (line[3] == '\n' || line[3] == '\r' || line[3] == ' ' || line[3] == '\t' || line[3] == '\0')) {
             printf("id name %s\n", NAME); // Uses the NAME macro from defs.h

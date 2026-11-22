@@ -9,6 +9,37 @@ TT TranspositionTable;
 _Static_assert(sizeof(TTEntry) == 16, "TTEntry must be 16 bytes");
 _Static_assert(sizeof(TTCluster) == 64, "TTCluster must be 64 bytes");
 uint8_t TTAge = 0;
+uint64_t GameNoiseSeed = 0;
+int EvalNoiseAmp = 0;
+
+static uint64_t SplitMix64(uint64_t x) {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+void ReseedGameNoise(void) {
+    static uint64_t rngState = 0;
+    if (rngState == 0) {
+        uint64_t r0 = (uint64_t)(unsigned int)rand();
+        uint64_t r1 = (uint64_t)(unsigned int)rand();
+        uint64_t r2 = (uint64_t)(unsigned int)rand();
+        uint64_t r3 = (uint64_t)(unsigned int)rand();
+        uint64_t t = (uint64_t)GetTimeMs();
+        rngState = SplitMix64(t ^ (r0 << 48) ^ (r1 << 32) ^ (r2 << 16) ^ r3);
+        if (rngState == 0) rngState = 0x9e3779b97f4a7c15ULL;
+    }
+    rngState = SplitMix64(rngState);
+    GameNoiseSeed = rngState;
+}
+
+static int PositionNoise(U64 posKey, uint64_t seed, int amp) {
+    if (amp <= 0) return 0;
+    uint64_t h = SplitMix64(posKey ^ seed);
+    uint64_t span = (uint64_t)(2 * amp + 1);
+    return (int)((h >> 32) % span) - amp;
+}
 
 // Eval weights
 extern int PieceValuesMG[13];
@@ -41,7 +72,7 @@ void InitLMR() {
     }
 }
 
-int Evaluate(const Board *pos) {
+static int EvaluateRaw(const Board *pos) {
     if (NNUE_Loaded) {
         return EvaluateNNUE(pos);
     }
@@ -228,6 +259,14 @@ int Evaluate(const Board *pos) {
     score += (pos->side == WHITE) ? 10 : -10;
 
     return (pos->side == WHITE) ? score : -score;
+}
+
+int Evaluate(const Board *pos) {
+    int eval = EvaluateRaw(pos);
+    if (EvalNoiseAmp > 0) {
+        eval += PositionNoise(pos->posKey, GameNoiseSeed, EvalNoiseAmp);
+    }
+    return eval;
 }
 
 // TT
@@ -994,6 +1033,7 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     StopSearch = 0;
     Nodes = 0;
     MaxNodes = 0;
+    EvalNoiseAmp = 0;
     CurrentSearchDepth = 0;
     StartTime = GetTimeMs();
     
@@ -1267,6 +1307,7 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
     static Board gPos;
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
     MaxNodes = 0;
+    EvalNoiseAmp = 0;
     CurrentSearchDepth = 0;
     ClearTT(); // Clear TT once before data generation starts
 
