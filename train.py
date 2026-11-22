@@ -39,7 +39,73 @@ ENTRY_DTYPE = np.dtype([
 ], align=True)
 
 
-def parse_fen_fast(fen_str):
+KNIGHT_OFFSETS = ((-2, -1), (-2, 1), (-1, -2), (-1, 2), (1, -2), (1, 2), (2, -1), (2, 1))
+KING_OFFSETS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
+ORTHO_DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+DIAG_DIRS = ((1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def is_in_check(board, ksq, side):
+    """Returns True if `side` (0=White, 1=Black) has its king at `ksq` in check."""
+    kr = ksq >> 3
+    kf = ksq & 7
+
+    if side == 0:
+        e_pawn, e_knight, e_king = 'p', 'n', 'k'
+        e_ortho, e_diag = ('r', 'q'), ('b', 'q')
+        pr = kr + 1
+    else:
+        e_pawn, e_knight, e_king = 'P', 'N', 'K'
+        e_ortho, e_diag = ('R', 'Q'), ('B', 'Q')
+        pr = kr - 1
+
+    # Enemy pawn attacks
+    if 0 <= pr < 8:
+        if kf > 0 and board[(pr << 3) | (kf - 1)] == e_pawn:
+            return True
+        if kf < 7 and board[(pr << 3) | (kf + 1)] == e_pawn:
+            return True
+
+    # Enemy knight attacks
+    for dr, df in KNIGHT_OFFSETS:
+        r, f = kr + dr, kf + df
+        if 0 <= r < 8 and 0 <= f < 8 and board[(r << 3) | f] == e_knight:
+            return True
+
+    # Enemy king adjacency
+    for dr, df in KING_OFFSETS:
+        r, f = kr + dr, kf + df
+        if 0 <= r < 8 and 0 <= f < 8 and board[(r << 3) | f] == e_king:
+            return True
+
+    # Enemy rook / queen orthogonal rays
+    for dr, df in ORTHO_DIRS:
+        r, f = kr + dr, kf + df
+        while 0 <= r < 8 and 0 <= f < 8:
+            ch = board[(r << 3) | f]
+            if ch is not None:
+                if ch in e_ortho:
+                    return True
+                break
+            r += dr
+            f += df
+
+    # Enemy bishop / queen diagonal rays
+    for dr, df in DIAG_DIRS:
+        r, f = kr + dr, kf + df
+        while 0 <= r < 8 and 0 <= f < 8:
+            ch = board[(r << 3) | f]
+            if ch is not None:
+                if ch in e_diag:
+                    return True
+                break
+            r += dr
+            f += df
+
+    return False
+
+
+def parse_fen_fast(fen_str, filter_checks=True, stats=None):
     """Fast single-pass FEN parser returning original and optionally horizontally mirrored positions."""
     parts = fen_str.split()
     if len(parts) < 2:
@@ -53,6 +119,7 @@ def parse_fen_fast(fen_str):
     file = 0
     w_ksq = -1
     b_ksq = -1
+    board = [None] * 64
     pieces = []
 
     for ch in board_str:
@@ -62,7 +129,10 @@ def parse_fen_fast(fen_str):
         elif '1' <= ch <= '8':
             file += ord(ch) - 48
         else:
+            if rank < 0 or rank > 7 or file < 0 or file > 7:
+                return None
             sq = (rank << 3) | file
+            board[sq] = ch
             if ch == 'K':
                 w_ksq = sq
             elif ch == 'k':
@@ -71,6 +141,12 @@ def parse_fen_fast(fen_str):
             file += 1
 
     if w_ksq == -1 or b_ksq == -1:
+        return None
+
+    # Filter out in-check positions (engine never calls static Evaluate() in check)
+    if filter_checks and is_in_check(board, w_ksq if side == 0 else b_ksq, side):
+        if stats is not None:
+            stats['in_check'] += 1
         return None
 
     w_feats = []
@@ -113,6 +189,7 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
 
     chunk = []
     total_valid = 0
+    stats = {'in_check': 0, 'mate': 0, 'score_cap': 0}
 
     with open(txt_path, 'r', encoding='utf-8') as fin, open(bin_path, 'wb') as fout:
         for line_idx, line in enumerate(fin, 1):
@@ -126,6 +203,7 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
 
             # Filter out checkmate annotations (e.g. Kaggle's "#+3" or "#-1")
             if '#' in eval_str:
+                stats['mate'] += 1
                 continue
             try:
                 score = float(eval_str)
@@ -134,9 +212,10 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
 
             # Filter out extreme tactical blowouts before computing evaluation targets
             if abs(score) > MAX_CP_SCORE:
+                stats['score_cap'] += 1
                 continue
 
-            parsed = parse_fen_fast(fen)
+            parsed = parse_fen_fast(fen, filter_checks=True, stats=stats)
             if parsed is None:
                 continue
 
@@ -185,7 +264,10 @@ def convert_txt_to_bin(txt_path="dataset.txt", bin_path="dataset.bin", chunk_siz
             total_valid += len(chunk)
 
     elapsed = time.time() - start_time
-    print(f"\n[+] Done! Preprocessed {total_valid:,} positions in {elapsed:.1f}s.")
+    print(
+        f"\n[+] Done! Preprocessed {total_valid:,} positions in {elapsed:.1f}s "
+        f"(filtered: {stats['in_check']:,} in-check, {stats['mate']:,} mate, {stats['score_cap']:,} |score|>{int(MAX_CP_SCORE)})."
+    )
 
 
 class BinaryChessDataset(Dataset):
