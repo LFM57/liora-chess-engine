@@ -19,19 +19,22 @@ static uint64_t SplitMix64(uint64_t x) {
     return x ^ (x >> 31);
 }
 
-void ReseedGameNoise(void) {
-    static uint64_t rngState = 0;
-    if (rngState == 0) {
+static uint64_t NextRngU64(uint64_t *state) {
+    if (*state == 0) {
         uint64_t r0 = (uint64_t)(unsigned int)rand();
         uint64_t r1 = (uint64_t)(unsigned int)rand();
         uint64_t r2 = (uint64_t)(unsigned int)rand();
         uint64_t r3 = (uint64_t)(unsigned int)rand();
-        uint64_t t = (uint64_t)GetTimeMs();
-        rngState = SplitMix64(t ^ (r0 << 48) ^ (r1 << 32) ^ (r2 << 16) ^ r3);
-        if (rngState == 0) rngState = 0x9e3779b97f4a7c15ULL;
+        *state = SplitMix64((uint64_t)GetTimeMs() ^ (r0 << 48) ^ (r1 << 32) ^ (r2 << 16) ^ r3);
+        if (*state == 0) *state = 0x9e3779b97f4a7c15ULL;
     }
-    rngState = SplitMix64(rngState);
-    GameNoiseSeed = rngState;
+    *state = SplitMix64(*state);
+    return *state;
+}
+
+void ReseedGameNoise(void) {
+    static uint64_t rngState = 0;
+    GameNoiseSeed = NextRngU64(&rngState);
 }
 
 static int PositionNoise(U64 posKey, uint64_t seed, int amp) {
@@ -1104,6 +1107,245 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     return ttScore;
 }
 
+static double RandomUnitDouble(void) {
+    static uint64_t rngState = 0;
+    uint64_t r = NextRngU64(&rngState);
+    return (double)(r >> 11) * (1.0 / 9007199254740992.0);
+}
+
+static void PrintMoveUci(Move move) {
+    const char *files = "abcdefgh";
+    const char *ranks = "12345678";
+    printf("%c%c%c%c", files[move.from % 8], ranks[move.from / 8],
+           files[move.to % 8], ranks[move.to / 8]);
+    if (move.promoted != EMPTY) {
+        char pChar = 'q';
+        if (move.promoted == N || move.promoted == n) pChar = 'n';
+        else if (move.promoted == R || move.promoted == r) pChar = 'r';
+        else if (move.promoted == B || move.promoted == b) pChar = 'b';
+        printf("%c", pChar);
+    }
+}
+
+typedef struct {
+    Move move;
+    int score;
+    Move pv[MAX_DEPTH];
+} RootCandidate;
+
+static int SameMove(Move a, Move b) {
+    return a.from == b.from && a.to == b.to && a.promoted == b.promoted;
+}
+
+static int IsMoveInCandidates(Move move, const RootCandidate *cands, int numCands) {
+    for (int i = 0; i < numCands; ++i) {
+        if (SameMove(move, cands[i].move)) return 1;
+    }
+    return 0;
+}
+
+static int CollectLegalRootMoves(Board *pos, Move *legalMoves, int *moveOrderScores) {
+    Move rawMoves[MAX_MOVES];
+    int rawCount = 0;
+    GenerateMoves(pos, rawMoves, &rawCount);
+
+    int numLegal = 0;
+    for (int i = 0; i < rawCount; ++i) {
+        if (MakeMove(pos, rawMoves[i])) {
+            TakeMove(pos, rawMoves[i]);
+            legalMoves[numLegal] = rawMoves[i];
+            if (rawMoves[i].promoted != EMPTY) {
+                moveOrderScores[numLegal] = 150000 + rawMoves[i].promoted;
+            } else if (rawMoves[i].capture != EMPTY) {
+                moveOrderScores[numLegal] = 100000 + PieceValuesMG[rawMoves[i].capture % 6];
+            } else {
+                moveOrderScores[numLegal] = History[pos->side][rawMoves[i].from][rawMoves[i].to];
+            }
+            numLegal++;
+        }
+    }
+    return numLegal;
+}
+
+static void SortMovesByScore(Move *moves, int *scores, int count) {
+    for (int i = 0; i < count - 1; ++i) {
+        int bestIdx = i;
+        for (int j = i + 1; j < count; ++j) {
+            if (scores[j] > scores[bestIdx]) bestIdx = j;
+        }
+        if (bestIdx != i) {
+            Move tm = moves[i];
+            moves[i] = moves[bestIdx];
+            moves[bestIdx] = tm;
+            int ts = scores[i];
+            scores[i] = scores[bestIdx];
+            scores[bestIdx] = ts;
+        }
+    }
+}
+
+/* Search all legal root moves excluding already-selected MultiPV candidates. */
+static int SearchBestRemainingRootMove(Board *pos, int depth, const Move *legalMoves, int numLegal,
+                                       const RootCandidate *excluded, int numExcluded,
+                                       RootCandidate *outCand) {
+    int alpha = -INF;
+    int beta = INF;
+    int bestIdx = -1;
+    int bestScore = -INF;
+    Move bestChildPv[MAX_DEPTH];
+    bestChildPv[0].from = NO_SQ;
+
+    for (int m = 0; m < numLegal; ++m) {
+        if (IsMoveInCandidates(legalMoves[m], excluded, numExcluded)) continue;
+        if (!MakeMove(pos, legalMoves[m])) continue;
+
+        Move childPv[MAX_DEPTH];
+        childPv[0].from = NO_SQ;
+        int score;
+        if (bestIdx == -1) {
+            score = -Negamax(pos, depth - 1, -beta, -alpha, 1, childPv);
+        } else {
+            score = -Negamax(pos, depth - 1, -alpha - 1, -alpha, 1, childPv);
+            if (!StopSearch && score > alpha && score < beta) {
+                childPv[0].from = NO_SQ;
+                score = -Negamax(pos, depth - 1, -beta, -alpha, 1, childPv);
+            }
+        }
+
+        TakeMove(pos, legalMoves[m]);
+        if (StopSearch) return 0;
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestIdx = m;
+            alpha = score;
+            int j = 0;
+            while (childPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
+                bestChildPv[j] = childPv[j];
+                j++;
+            }
+            bestChildPv[j].from = NO_SQ;
+        }
+    }
+
+    if (bestIdx == -1) return 0;
+
+    outCand->move = legalMoves[bestIdx];
+    outCand->score = bestScore;
+    outCand->pv[0] = legalMoves[bestIdx];
+    int j = 0;
+    while (bestChildPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
+        outCand->pv[j + 1] = bestChildPv[j];
+        j++;
+    }
+    outCand->pv[j + 1].from = NO_SQ;
+    return 1;
+}
+
+static Move PickLimitedStrengthMove(const RootCandidate *cands, int numCands, double tempCp) {
+    Move empty = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
+    if (numCands <= 0) return empty;
+    if (numCands == 1 || tempCp <= 0.0) return cands[0].move;
+
+    int bestScore = cands[0].score;
+    if (bestScore > MATE_SCORE - MAX_DEPTH) {
+        return cands[0].move;
+    }
+
+    double weights[MAX_MOVES];
+    double sumWeights = 0.0;
+    for (int i = 0; i < numCands; ++i) {
+        double diff = (double)(bestScore - cands[i].score);
+        if (diff < 0.0) diff = 0.0;
+        if (diff > 2000.0) diff = 2000.0;
+        weights[i] = exp(-diff / tempCp);
+        sumWeights += weights[i];
+    }
+
+    if (sumWeights <= 0.0) return cands[0].move;
+
+    double r = RandomUnitDouble() * sumWeights;
+    double accum = 0.0;
+    for (int i = 0; i < numCands; ++i) {
+        accum += weights[i];
+        if (r < accum) {
+            return cands[i].move;
+        }
+    }
+    return cands[0].move;
+}
+
+static Move SearchRootMultiPV(Board *pos, int maxDepth, long optTime, const StrengthParams *params) {
+    Move legalMoves[MAX_MOVES];
+    int moveOrderScores[MAX_MOVES];
+    int numLegal = CollectLegalRootMoves(pos, legalMoves, moveOrderScores);
+
+    Move empty = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
+    if (numLegal == 0) return empty;
+
+    int targetPV = (params->multiPV < numLegal) ? params->multiPV : numLegal;
+    if (targetPV < 1) targetPV = 1;
+
+    RootCandidate completedCands[MAX_MOVES];
+    int numCompleted = 0;
+
+    int inCheckRoot = SqAttacked(pos->king_sq[pos->side], pos->side ^ 1, pos);
+    int rootEval = inCheckRoot ? -INF : Evaluate(pos);
+
+    for (int d = 1; d <= maxDepth; ++d) {
+        CurrentSearchDepth = d;
+        EvalStack[0] = rootEval;
+        SortMovesByScore(legalMoves, moveOrderScores, numLegal);
+
+        RootCandidate currentCands[MAX_MOVES];
+        int numCurrent = 0;
+        for (int pvIdx = 0; pvIdx < targetPV; ++pvIdx) {
+            if (!SearchBestRemainingRootMove(pos, d, legalMoves, numLegal,
+                                             currentCands, numCurrent,
+                                             &currentCands[numCurrent])) {
+                break;
+            }
+            numCurrent++;
+        }
+
+        // Discard partial depth results so Softmax never samples an incomplete pass
+        if (StopSearch || numCurrent < targetPV) {
+            break;
+        }
+
+        memcpy(completedCands, currentCands, (size_t)numCurrent * sizeof(RootCandidate));
+        numCompleted = numCurrent;
+
+        for (int m = 0; m < numLegal; ++m) {
+            moveOrderScores[m] = -1000000;
+            for (int k = 0; k < numCompleted; ++k) {
+                if (SameMove(legalMoves[m], completedCands[k].move)) {
+                    moveOrderScores[m] = 1000000 + (numCompleted - k) * 10000 + completedCands[k].score;
+                    break;
+                }
+            }
+        }
+
+        long t = GetTimeMs() - StartTime;
+        printf("info depth %d score cp %d nodes %llu time %ld pv ",
+               d, completedCands[0].score, (unsigned long long)Nodes, t);
+        for (int j = 0; completedCands[0].pv[j].from != NO_SQ && j < MAX_DEPTH; ++j) {
+            PrintMoveUci(completedCands[0].pv[j]);
+            printf(" ");
+        }
+        printf("\n");
+
+        if (MaxNodes > 0 && Nodes >= MaxNodes) break;
+        if (t >= optTime && maxDepth > 1) break;
+    }
+
+    if (numCompleted > 0) {
+        return PickLimitedStrengthMove(completedCands, numCompleted, params->tempCp);
+    }
+
+    return legalMoves[0];
+}
+
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime) {
     TTAge++;
     StopSearch = 0;
@@ -1197,6 +1439,10 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
 
     // CORRECTION : Toujours initialiser avec EMPTY (12) et pas 0 (qui est le pion P)
     Move bestMoveSoFar = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
+
+    if (LimitStrength && params.multiPV > 1) {
+        bestMoveSoFar = SearchRootMultiPV(pos, depth, opt_time, &params);
+    } else {
     Move pvLine[MAX_DEPTH];
     
     int previousScore = 0; 
@@ -1281,6 +1527,7 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
 
         // Full use of allocated optimal time
         if(t >= opt_time && depth > 1) break; 
+    }
     }
     
     // Bestmove and Fallback Logic Fix
