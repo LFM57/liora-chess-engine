@@ -7,7 +7,7 @@
 #include "incbin.h"
 
 #ifndef NNUE_EMBEDDED_FILE
-#define NNUE_EMBEDDED_FILE "../NNUE Weights/Gen 4/liora_20.nnue"
+#define NNUE_EMBEDDED_FILE "../NNUE Weights/Gen 5/liora.nnue"
 #endif
 
 INCBIN(nnue, NNUE_EMBEDDED_FILE);
