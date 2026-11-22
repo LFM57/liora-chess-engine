@@ -182,8 +182,11 @@ int main() {
             continue;
         }
         
-        if(line[0] == '\n') continue;
-        if(!strncmp(line, "uci", 3)) {
+        if(line[0] == '\n' || line[0] == '\r') continue;
+        if(!strncmp(line, "ucinewgame", 10)) {
+            ClearTT();
+            ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &pos);
+        } else if(!strncmp(line, "uci", 3) && (line[3] == '\n' || line[3] == '\r' || line[3] == ' ' || line[3] == '\t' || line[3] == '\0')) {
             printf("id name %s\n", NAME); // Uses the NAME macro from defs.h
             printf("id author %s\n", AUTHOR);
             printf("option name Hash type spin default 64 min 1 max 4096\n");
@@ -195,9 +198,6 @@ int main() {
             ParseOption(line);
         } else if(!strncmp(line, "isready", 7)) {
             printf("readyok\n");
-        } else if(!strncmp(line, "ucinewgame", 10)) {
-            ClearTT();
-            ParseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &pos);
         } else if(!strncmp(line, "position", 8)) {
             ParsePosition(line);
         } else if(!strncmp(line, "go", 2)) {
