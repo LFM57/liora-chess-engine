@@ -39,8 +39,13 @@ void ParsePosition(char *line) {
     
     ptr = strstr(line, "moves");
     if(ptr) {
-        ptr += 6;
-        while(*ptr) {
+        ptr += 5;
+        while(*ptr == ' ') ptr++;
+        while(*ptr && *ptr != '\n' && *ptr != '\r') {
+            if(ptr[0] < 'a' || ptr[0] > 'h' || ptr[1] < '1' || ptr[1] > '8' ||
+               ptr[2] < 'a' || ptr[2] > 'h' || ptr[3] < '1' || ptr[3] > '8') {
+                break;
+            }
             // Parse UCI move
             int from = (ptr[0] - 'a') + (ptr[1] - '1') * 8;
             int to = (ptr[2] - 'a') + (ptr[3] - '1') * 8;
@@ -68,8 +73,8 @@ void ParsePosition(char *line) {
                 }
             }
             
-            while(*ptr && *ptr != ' ') ptr++;
-            if(*ptr == ' ') ptr++;
+            while(*ptr && *ptr != ' ' && *ptr != '\n' && *ptr != '\r') ptr++;
+            while(*ptr == ' ') ptr++;
         }
     }
     pos.ply = 0; // Reset search depth counter after applying game moves
@@ -166,13 +171,16 @@ int main() {
     InitMvvLva();
     InitLMR();
     
-    char line[2048];
+    static char line[65536];
     
     setbuf(stdout, NULL);
     setbuf(stdin, NULL);
     
     while(1) {
-        if(!fgets(line, 2048, stdin)) continue;
+        if(!fgets(line, sizeof(line), stdin)) {
+            if (feof(stdin)) break;
+            continue;
+        }
         
         if(line[0] == '\n') continue;
         if(!strncmp(line, "uci", 3)) {
