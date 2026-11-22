@@ -1086,24 +1086,26 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     if(depth == -1) depth = MAX_DEPTH;
     
     // --- OPENING BOOK CHECK ---
-    Move bookMove = GetBookMove(pos);
-    if(bookMove.from != NO_SQ) {
-        char *files = "abcdefgh";
-        char *ranks = "12345678";
-        
-        // Message propre pour l'interface
-        printf("info string Playing from Book\n");
-        
-        printf("bestmove %c%c%c%c", files[bookMove.from%8], ranks[bookMove.from/8], files[bookMove.to%8], ranks[bookMove.to/8]);
-        if(bookMove.promoted != EMPTY) {
-            char pChar = 'q';
-            if(bookMove.promoted == N || bookMove.promoted == n) pChar = 'n';
-            if(bookMove.promoted == R || bookMove.promoted == r) pChar = 'r';
-            if(bookMove.promoted == B || bookMove.promoted == b) pChar = 'b';
-            printf("%c", pChar);
+    if (!LimitStrength || UciElo >= 2200) {
+        Move bookMove = GetBookMove(pos);
+        if(bookMove.from != NO_SQ) {
+            char *files = "abcdefgh";
+            char *ranks = "12345678";
+            
+            // Message propre pour l'interface
+            printf("info string Playing from Book\n");
+            
+            printf("bestmove %c%c%c%c", files[bookMove.from%8], ranks[bookMove.from/8], files[bookMove.to%8], ranks[bookMove.to/8]);
+            if(bookMove.promoted != EMPTY) {
+                char pChar = 'q';
+                if(bookMove.promoted == N || bookMove.promoted == n) pChar = 'n';
+                if(bookMove.promoted == R || bookMove.promoted == r) pChar = 'r';
+                if(bookMove.promoted == B || bookMove.promoted == b) pChar = 'b';
+                printf("%c", pChar);
+            }
+            printf("\n");
+            return; // Skip search completely!
         }
-        printf("\n");
-        return; // Skip search completely!
     }
     // --------------------------
 
