@@ -363,8 +363,8 @@ long long GetTimeMs() {
 long long StartTime;
 long long StopTime;
 int StopSearch;
-int Nodes;
-int MaxNodes = 0;
+uint64_t Nodes;
+uint64_t MaxNodes = 0;
 
 void CheckTime() {
     // Vérifie le temps plus souvent (tous les 1024 noeuds au lieu de 2048)
@@ -1124,7 +1124,7 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         }
         
         long t = GetTimeMs() - StartTime;
-        printf("info depth %d score cp %d nodes %d time %ld pv ", d, score, Nodes, t); 
+        printf("info depth %d score cp %d nodes %llu time %ld pv ", d, score, (unsigned long long)Nodes, t);
         
         int i = 0;
         while(pvLine[i].from != NO_SQ && i < MAX_DEPTH) {
