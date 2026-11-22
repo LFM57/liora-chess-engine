@@ -6,7 +6,7 @@
 
 **Liora** is a high-performance, open-source chess engine written in C. It supports the standard Universal Chess Interface (UCI) protocol and can be integrated with popular chess GUIs such as Cutechess, Arena, BanksiaGUI, and Nibbler.
 
-Flagship version, [v12.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v12.0_F), introduces a rebuilt `(768 -> 256)x2` SCReLU NNUE evaluation (Gen 5) that scores **+432.7 ± 33.0 Elo** over [v11.13 C](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.13_C) HCE (`923.5 / 1000`, `92.35%` win rate across 1,000 Bullet/Ultra-Bullet games), following [v11.13 C](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.13_C)'s `+84.3 ± 17.9` Elo gain over [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.0_F) (`2569 ± 18` official [CCRL Blitz Rating](https://computerchess.org.uk/404/cgi/engine_details.cgi?eng=Liora%2011.0%20F%2064-bit)).
+Flagship version, [v12.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v12.0_F), introduces a rebuilt of the NNUE that scores **$`+432.7 \pm 33.0`$ Elo** over [v11.13 C](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.13_C) HCE, following [v11.13 C](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.13_C)'s $`+84.3 \pm 17.9`$ Elo gain over [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases/tag/v11.0_F) ($`2569 \pm 18`$ official [CCRL Blitz Rating](https://computerchess.org.uk/404/cgi/engine_details.cgi?eng=Liora%2011.0%20F%2064-bit)). **This brings the absolute Elo around 3100 Elo** (unofficial).
 
 ---
 
