@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 train.py - High-Performance PyTorch Trainer for Liora NNUE
-Architecture: HalfKP (40960 -> 256)x2 -> 1
+Architecture: (768 -> 256)x2 -> 1 with SCReLU activation
 Uses: Sparse EmbeddingBag, Memory-Mapped Binary Dataset, Vectorized Batches
 Outputs: liora_[epoch].nnue, liora.nnue
 """
@@ -18,16 +18,17 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 
-NNUE_INPUTS = 40960
-NNUE_BASE_INPUTS = 640
+NNUE_INPUTS = 768        # 12 piece types (including both kings) * 64 squares
 NNUE_L1 = 256
-PADDING_IDX = 40960      # Index 40960 is used as a zero-weight padding slot
-BASE_PADDING_IDX = 640   # Index 640 is used as a zero-weight padding slot for base features
-MAX_PIECES = 32          # Max non-king pieces on a chess board
+NNUE_QA = 181            # Feature quantization scale (181^2 = 32761 <= 32767)
+NNUE_QB = 64             # Output weight quantization scale
+NNUE_SCALE = 400         # Centipawn output scale
+PADDING_IDX = 768        # Index 768 is used as a zero-weight padding slot
+MAX_PIECES = 32          # Max pieces on a chess board (including both kings)
 MAX_CP_SCORE = 3000.0    # Filter threshold for extreme tactical blowouts
 
-PIECE_MAP_W = {'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'p': 5, 'n': 6, 'b': 7, 'r': 8, 'q': 9}
-PIECE_MAP_B = {'p': 0, 'n': 1, 'b': 2, 'r': 3, 'q': 4, 'P': 5, 'N': 6, 'B': 7, 'R': 8, 'Q': 9}
+PIECE_MAP_W = {'P': 0, 'N': 1, 'B': 2, 'R': 3, 'Q': 4, 'K': 5, 'p': 6, 'n': 7, 'b': 8, 'r': 9, 'q': 10, 'k': 11}
+PIECE_MAP_B = {'p': 0, 'n': 1, 'b': 2, 'r': 3, 'q': 4, 'k': 5, 'P': 6, 'N': 7, 'B': 8, 'R': 9, 'Q': 10, 'K': 11}
 
 # Binary record definition (136 bytes per position)
 ENTRY_DTYPE = np.dtype([
@@ -66,8 +67,7 @@ def parse_fen_fast(fen_str):
                 w_ksq = sq
             elif ch == 'k':
                 b_ksq = sq
-            else:
-                pieces.append((ch, sq))
+            pieces.append((ch, sq))
             file += 1
 
     if w_ksq == -1 or b_ksq == -1:
@@ -78,21 +78,17 @@ def parse_fen_fast(fen_str):
     w_feats_m = []
     b_feats_m = []
 
-    b_ksq_flipped = b_ksq ^ 56
-    w_ksq_m = w_ksq ^ 7
-    b_ksq_m_flipped = b_ksq ^ 63  # (b_ksq ^ 7) ^ 56
-
     for ch, sq in pieces:
         p_w = PIECE_MAP_W.get(ch)
         if p_w is not None:
-            w_feats.append(w_ksq * 640 + p_w * 64 + sq)
+            w_feats.append(p_w * 64 + sq)
             if allow_mirror:
-                w_feats_m.append(w_ksq_m * 640 + p_w * 64 + (sq ^ 7))
+                w_feats_m.append(p_w * 64 + (sq ^ 7))
 
             p_b = PIECE_MAP_B[ch]
-            b_feats.append(b_ksq_flipped * 640 + p_b * 64 + (sq ^ 56))
+            b_feats.append(p_b * 64 + (sq ^ 56))
             if allow_mirror:
-                b_feats_m.append(b_ksq_m_flipped * 640 + p_b * 64 + (sq ^ 63))
+                b_feats_m.append(p_b * 64 + (sq ^ 63))
 
     w_arr = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
     b_arr = np.full(MAX_PIECES, PADDING_IDX, dtype=np.uint16)
@@ -216,21 +212,17 @@ def fast_collate(batch):
 class LioraNNUE(nn.Module):
     def __init__(self):
         super().__init__()
-        # 40960 real HalfKP inputs + 1 dummy slot at 40960 for zero padding
+        # 768 real piece-square inputs (including both kings) + 1 dummy slot at 768 for zero padding
         self.ft = nn.EmbeddingBag(NNUE_INPUTS + 1, NNUE_L1, mode='sum', padding_idx=PADDING_IDX)
-        # Virtual factorized base table: 640 piece-square inputs + 1 dummy slot at 640
-        self.ft_base = nn.EmbeddingBag(NNUE_BASE_INPUTS + 1, NNUE_L1, mode='sum', padding_idx=BASE_PADDING_IDX)
         self.ft_bias = nn.Parameter(torch.zeros(NNUE_L1))
         self.out = nn.Linear(2 * NNUE_L1, 1)
 
-        # Break symmetry with random initialization while keeping padding slots strictly zeroed
-        nn.init.normal_(self.ft.weight, mean=0.0, std=0.01)
-        nn.init.normal_(self.ft_base.weight, mean=0.0, std=0.02)
+        # Break symmetry with random initialization while keeping padding slot strictly zeroed
+        nn.init.normal_(self.ft.weight, mean=0.0, std=0.02)
         with torch.no_grad():
             self.ft.weight[PADDING_IDX].zero_()
-            self.ft_base.weight[BASE_PADDING_IDX].zero_()
 
-        # Positive bias places initial activations safely inside the active linear region (0.0, 1.0)
+        # Positive bias places initial activations safely inside the active SCReLU region (0.0, 1.0)
         nn.init.constant_(self.ft_bias, 0.5)
 
         # Output layer initialized with standard fan-in scaling
@@ -238,13 +230,9 @@ class LioraNNUE(nn.Module):
         nn.init.zeros_(self.out.bias)
 
     def forward(self, w_feats, b_feats, sides):
-        # Derive king-independent base piece-square indices (640 padding for padded slots)
-        w_base = torch.where(w_feats == PADDING_IDX, BASE_PADDING_IDX, w_feats % NNUE_BASE_INPUTS)
-        b_base = torch.where(b_feats == PADDING_IDX, BASE_PADDING_IDX, b_feats % NNUE_BASE_INPUTS)
-
-        # Sparse accumulation: shape [batch_size, 256]
-        w_acc = torch.clamp(self.ft(w_feats) + self.ft_base(w_base) + self.ft_bias, 0.0, 1.0)
-        b_acc = torch.clamp(self.ft(b_feats) + self.ft_base(b_base) + self.ft_bias, 0.0, 1.0)
+        # Sparse accumulation + SCReLU activation: shape [batch_size, 256]
+        w_acc = torch.clamp(self.ft(w_feats) + self.ft_bias, 0.0, 1.0).square()
+        b_acc = torch.clamp(self.ft(b_feats) + self.ft_bias, 0.0, 1.0).square()
 
         # Perspective selection
         sides_mask = (sides == 0).unsqueeze(1)
@@ -252,29 +240,21 @@ class LioraNNUE(nn.Module):
         them = torch.where(sides_mask, b_acc, w_acc)
 
         x = torch.cat([us, them], dim=1)
-        score = self.out(x)
-        # Return the unactivated logit directly (BCEWithLogitsLoss applies sigmoid internally)
-        return score / 2.5
+        # Output directly in cp / 400 logit units (BCEWithLogitsLoss applies sigmoid internally)
+        return self.out(x)
 
 
 def export_to_nnue(model, filename="liora.nnue"):
     print(f"Exporting quantized weights to {filename}...")
-    # Exclude padding slots and fold the virtual 640-feature base table into each of the 64 King slices
-    ft_w = model.ft.weight.data[:NNUE_INPUTS].cpu().numpy()              # [40960, 256]
-    base_w = model.ft_base.weight.data[:NNUE_BASE_INPUTS].cpu().numpy()  # [640, 256]
-    ft_w = (ft_w.reshape(64, NNUE_BASE_INPUTS, NNUE_L1) + base_w).reshape(NNUE_INPUTS, NNUE_L1)
-
+    ft_w = model.ft.weight.data[:NNUE_INPUTS].cpu().numpy()  # [768, 256]
     ft_b = model.ft_bias.data.cpu().numpy()                  # [256]
     out_w = model.out.weight.data.cpu().numpy()              # [1, 512]
     out_b = model.out.bias.data.cpu().numpy()                # [1]
 
-    FV_SCALE = 127.0
-    OUT_SCALE = 2048.0  # Increased from 64.0 to stop weights collapsing into {-1, 0, 1}
-
-    q_ft_w = np.clip(np.round(ft_w * FV_SCALE), -32767, 32767).astype(np.int16)
-    q_ft_b = np.clip(np.round(ft_b * FV_SCALE), -32767, 32767).astype(np.int16)
-    q_out_w = np.clip(np.round(out_w * OUT_SCALE), -32767, 32767).astype(np.int16)
-    q_out_b = np.int32(np.round(out_b[0] * FV_SCALE * OUT_SCALE))
+    q_ft_w = np.clip(np.round(ft_w * NNUE_QA), -32767, 32767).astype(np.int16)
+    q_ft_b = np.clip(np.round(ft_b * NNUE_QA), -32767, 32767).astype(np.int16)
+    q_out_w = np.clip(np.round(out_w * NNUE_QB), -32767, 32767).astype(np.int16)
+    q_out_b = np.int32(np.round(out_b[0] * NNUE_QA * NNUE_QA * NNUE_QB))
 
     with open(filename, "wb") as f:
         f.write(q_ft_b.tobytes())
