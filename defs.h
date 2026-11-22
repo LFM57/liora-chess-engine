@@ -114,6 +114,8 @@ extern Move KillerMoves[MAX_DEPTH][2];
 extern int LmrTable[MAX_DEPTH][MAX_MOVES];
 extern TT TranspositionTable;
 extern int NNUE_Loaded;
+extern int LimitStrength;
+extern int UciElo;
 extern U64 SetMask[64];
 extern U64 ClearMask[64];
 extern U64 RankMask[8];

@@ -8,6 +8,40 @@ Board pos;
 char BookPath[512] = "";
 char EvalFile[512] = "<embedded>";
 int UseNNUE = 0;
+int LimitStrength = 0;
+int UciElo = 1500;
+
+static char ToLowerAscii(char c) {
+    return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+}
+
+static const char *FindOptionTokenIgnoreCase(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !*needle) return NULL;
+    size_t nlen = strlen(needle);
+    for (const char *p = haystack; *p; ++p) {
+        size_t i = 0;
+        while (i < nlen && p[i] && ToLowerAscii(p[i]) == ToLowerAscii(needle[i])) {
+            i++;
+        }
+        if (i == nlen) {
+            char next = p[nlen];
+            if (next == '\0' || next == ' ' || next == '\t' || next == '\n' || next == '\r') {
+                return p;
+            }
+        }
+    }
+    return NULL;
+}
+
+static int StartsWithIgnoreCase(const char *str, const char *prefix) {
+    if (!str || !prefix) return 0;
+    while (*prefix) {
+        if (!*str || ToLowerAscii(*str) != ToLowerAscii(*prefix)) return 0;
+        str++;
+        prefix++;
+    }
+    return 1;
+}
 
 void ParseGo(char *line) {
     int depth = -1, wtime = 300000, btime = 300000, winc = 0, binc = 0, movestogo = 30, movetime = -1;
@@ -143,6 +177,33 @@ void ParseOption(char *line) {
             }
         }
     }
+    // Parse: setoption name UCI_LimitStrength value <true|false>
+    else if (FindOptionTokenIgnoreCase(line, "name UCI_LimitStrength")) {
+        const char *ptr = FindOptionTokenIgnoreCase(line, "value");
+        if (ptr) {
+            ptr += 5;
+            while (*ptr == ' ' || *ptr == '\t') ptr++;
+            if (StartsWithIgnoreCase(ptr, "true") || *ptr == '1') {
+                LimitStrength = 1;
+            } else if (StartsWithIgnoreCase(ptr, "false") || *ptr == '0') {
+                LimitStrength = 0;
+            }
+        }
+    }
+    // Parse: setoption name UCI_Elo value <x>
+    else if (FindOptionTokenIgnoreCase(line, "name UCI_Elo")) {
+        const char *ptr = FindOptionTokenIgnoreCase(line, "value");
+        if (ptr) {
+            ptr += 5;
+            while (*ptr == ' ' || *ptr == '\t') ptr++;
+            if ((*ptr >= '0' && *ptr <= '9') || *ptr == '-' || *ptr == '+') {
+                int elo = atoi(ptr);
+                if (elo < 1200) elo = 1200;
+                if (elo > 3100) elo = 3100;
+                UciElo = elo;
+            }
+        }
+    }
 }
 
 int main() {
@@ -193,6 +254,8 @@ int main() {
             printf("option name BookPath type string default <empty>\n");
             printf("option name UseNNUE type check default %s\n", UseNNUE ? "true" : "false");
             printf("option name EvalFile type string default %s\n", HasEmbeddedNNUE() ? "<embedded>" : "<empty>");
+            printf("option name UCI_LimitStrength type check default false\n");
+            printf("option name UCI_Elo type spin default 1500 min 1200 max 3100\n");
             printf("uciok\n");
         } else if(!strncmp(line, "setoption", 9)) {
             ParseOption(line);
