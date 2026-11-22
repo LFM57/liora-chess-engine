@@ -41,6 +41,82 @@ static int PositionNoise(U64 posKey, uint64_t seed, int amp) {
     return (int)((h >> 32) % span) - amp;
 }
 
+typedef struct {
+    int elo;
+    int maxDepth;
+    uint64_t maxNodes;
+    int multiPV;
+    double tempCp;
+    int evalNoise;
+} EloLevel;
+
+typedef struct {
+    int maxDepth;
+    uint64_t maxNodes;
+    int multiPV;
+    double tempCp;
+    int evalNoise;
+} StrengthParams;
+
+static const EloLevel EloTable[] = {
+    { 1200,  2,      80ULL, 8, 180.0, 160 },
+    { 1400,  3,     200ULL, 6, 110.0,  90 },
+    { 1600,  5,     600ULL, 5,  65.0,  25 },
+    { 1800,  7,    1800ULL, 4,  38.0,   0 },
+    { 2100, 10,    6000ULL, 3,  20.0,   0 },
+    { 2400, 13,   25000ULL, 2,  10.0,   0 },
+    { 2750, 18,  150000ULL, 1,   0.0,   0 },
+    { 3000, 24,  750000ULL, 1,   0.0,   0 },
+    { 3100, 64,       0ULL, 1,   0.0,   0 }
+};
+
+static StrengthParams GetStrengthParams(int elo) {
+    const int numLevels = (int)(sizeof(EloTable) / sizeof(EloTable[0]));
+    if (elo <= EloTable[0].elo) {
+        StrengthParams p = {
+            EloTable[0].maxDepth, EloTable[0].maxNodes,
+            EloTable[0].multiPV, EloTable[0].tempCp, EloTable[0].evalNoise
+        };
+        return p;
+    }
+    if (elo >= EloTable[numLevels - 1].elo) {
+        StrengthParams p = {
+            EloTable[numLevels - 1].maxDepth, EloTable[numLevels - 1].maxNodes,
+            EloTable[numLevels - 1].multiPV, EloTable[numLevels - 1].tempCp,
+            EloTable[numLevels - 1].evalNoise
+        };
+        return p;
+    }
+
+    for (int i = 0; i < numLevels - 1; ++i) {
+        if (elo >= EloTable[i].elo && elo <= EloTable[i + 1].elo) {
+            const EloLevel *a = &EloTable[i];
+            const EloLevel *b = &EloTable[i + 1];
+            double t = (double)(elo - a->elo) / (double)(b->elo - a->elo);
+
+            StrengthParams p;
+            p.maxDepth = (int)lround(a->maxDepth * (1.0 - t) + b->maxDepth * t);
+            p.multiPV = (int)lround(a->multiPV * (1.0 - t) + b->multiPV * t);
+            p.tempCp = a->tempCp * (1.0 - t) + b->tempCp * t;
+            p.evalNoise = (int)lround(a->evalNoise * (1.0 - t) + b->evalNoise * t);
+
+            // Strength scales roughly linearly with log(nodes)
+            double aNodes = (a->maxNodes > 0) ? (double)a->maxNodes : 2000000.0;
+            double bNodes = (b->maxNodes > 0) ? (double)b->maxNodes : 2000000.0;
+            p.maxNodes = (uint64_t)llround(exp(log(aNodes) * (1.0 - t) + log(bNodes) * t));
+
+            if (p.maxDepth < 1) p.maxDepth = 1;
+            if (p.maxNodes < 1) p.maxNodes = 1;
+            if (p.multiPV < 1) p.multiPV = 1;
+            if (p.evalNoise < 0) p.evalNoise = 0;
+            return p;
+        }
+    }
+
+    StrengthParams fallback = { MAX_DEPTH, 0ULL, 1, 0.0, 0 };
+    return fallback;
+}
+
 // Eval weights
 extern int PieceValuesMG[13];
 extern int PieceValuesEG[13];
@@ -1108,6 +1184,16 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         }
     }
     // --------------------------
+
+    StrengthParams params = { MAX_DEPTH, 0ULL, 1, 0.0, 0 };
+    if (LimitStrength) {
+        params = GetStrengthParams(UciElo);
+        MaxNodes = params.maxNodes;
+        EvalNoiseAmp = params.evalNoise;
+        if (depth > params.maxDepth) {
+            depth = params.maxDepth;
+        }
+    }
 
     // CORRECTION : Toujours initialiser avec EMPTY (12) et pas 0 (qui est le pion P)
     Move bestMoveSoFar = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
