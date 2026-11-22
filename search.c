@@ -365,12 +365,15 @@ long long StopTime;
 int StopSearch;
 uint64_t Nodes;
 uint64_t MaxNodes = 0;
+int CurrentSearchDepth = 0;
 
 void CheckTime() {
+    if (MaxNodes > 0 && CurrentSearchDepth > 1 && Nodes >= MaxNodes) {
+        StopSearch = 1;
+    }
     // Vérifie le temps plus souvent (tous les 1024 noeuds au lieu de 2048)
     if((Nodes & 1023) == 0) {
         if(GetTimeMs() >= StopTime) StopSearch = 1;
-        if(MaxNodes > 0 && Nodes >= MaxNodes) StopSearch = 1;
     }
 }
 
@@ -990,6 +993,8 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     TTAge++;
     StopSearch = 0;
     Nodes = 0;
+    MaxNodes = 0;
+    CurrentSearchDepth = 0;
     StartTime = GetTimeMs();
     
     // CRITICAL: Reset search tree ply to 0 at the root of every search!
@@ -1069,6 +1074,7 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     int previousScore = 0; 
     
     for(int d=1; d<=depth; ++d) {
+        CurrentSearchDepth = d;
         int alpha = -INF;
         int beta = INF;
         int score;
@@ -1143,6 +1149,8 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         }
         printf("\n");
         
+        if (MaxNodes > 0 && Nodes >= MaxNodes) break;
+
         // Full use of allocated optimal time
         if(t >= opt_time && depth > 1) break; 
     }
@@ -1258,6 +1266,8 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
 
     static Board gPos;
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
+    MaxNodes = 0;
+    CurrentSearchDepth = 0;
     ClearTT(); // Clear TT once before data generation starts
 
     for (int g = 1; g <= numGames; ++g) {
