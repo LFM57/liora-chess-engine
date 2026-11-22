@@ -40,7 +40,7 @@ Flagship version, [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases
 
 ### Evaluation
 - **Hybrid Evaluation Architecture**:
-  - **NNUE (Efficiently Updatable Neural Network)**: HalfKP-style feature accumulator with incremental updates during move making/unmaking.
+  - **NNUE (Efficiently Updatable Neural Network)**: `(768 -> 256)x2 -> 1` SCReLU architecture (12 piece types including both kings) with lazy, fused AVX2 incremental accumulator updates.
   - **Handcrafted Evaluation (HCE)**: Automatic robust fallback when no NNUE net is loaded:
     - Tapered evaluation interpolating midgame and endgame phases.
     - Piece-square tables (PSQT).
@@ -49,8 +49,8 @@ Flagship version, [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases
     - King safety penalties and pawn shields.
 
 ### Data Generation & Training
-- Built-in self-play data generation pipeline (`RunDataGen`) with tactical noise filtering.
-- PyTorch training workflow (`train.py`) exporting quantized binary weights directly compatible with Liora.
+- Built-in self-play data generation pipeline (`RunDataGen`) with quiet-position and tactical noise filtering.
+- PyTorch training workflow (`train.py`) with in-check filtering, game-level validation splitting, cosine LR annealing, and quantized SCReLU binary export directly compatible with Liora.
 
 ---
 
@@ -65,6 +65,11 @@ Flagship version, [v11.0 F](https://github.com/LFM57/liora-chess-engine/releases
 make
 ```
 
+To embed a trained `(768 -> 256)x2` SCReLU network directly into the binary:
+```bash
+make EMBED_NNUE=1 NNUE_FILE=path/to/liora.nnue
+```
+
 To clean build artifacts:
 ```bash
 make clean
@@ -77,7 +82,7 @@ mingw32-make
 ```
 Or directly with GCC:
 ```bash
-gcc -O3 -Wall -Wextra board.c main.c nnue.c polyglot.c search.c -lm -o liora.exe
+gcc -O3 -Wall -Wextra board.c main.c nnue.c nnue_embed.c polyglot.c search.c -lm -o liora.exe
 ```
 
 ---
@@ -88,7 +93,8 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c polyglot.c search.c -lm -o liora.exe
 | :--- | :---: | :---: | :--- |
 | `Hash` | `spin` | `64` | Transposition table size in megabytes (1 to 4096 MB). |
 | `BookPath` | `string` | `<empty>` | Filepath to an external Polyglot opening book (`.bin`). |
-| `EvalFile` | `string` | `liora.nnue` | Path to the neural network file. Falls back to HCE if missing. |
+| `UseNNUE` | `check` | `false` | Enable NNUE evaluation when a compatible network is loaded. |
+| `EvalFile` | `string` | `<empty>` | Path to a `(768 -> 256)x2` SCReLU `.nnue` network (`<embedded>` if built with `EMBED_NNUE=1`). Falls back to HCE if missing. |
 
 ## License
 
