@@ -10,6 +10,7 @@ char EvalFile[512] = "<embedded>";
 int UseNNUE = 0;
 int LimitStrength = 0;
 int UciElo = 1500;
+int MultiPV = 1;
 
 static char ToLowerAscii(char c) {
     return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
@@ -218,6 +219,20 @@ void ParseOption(char *line) {
             }
         }
     }
+    // Parse: setoption name MultiPV value <x>
+    else if (FindOptionTokenIgnoreCase(line, "name MultiPV")) {
+        const char *ptr = FindOptionTokenIgnoreCase(line, "value");
+        if (ptr) {
+            ptr += 5;
+            while (*ptr == ' ' || *ptr == '\t') ptr++;
+            if ((*ptr >= '0' && *ptr <= '9') || *ptr == '-' || *ptr == '+') {
+                int mpv = atoi(ptr);
+                if (mpv < 1) mpv = 1;
+                if (mpv > 256) mpv = 256;
+                MultiPV = mpv;
+            }
+        }
+    }
 }
 
 int main() {
@@ -272,6 +287,7 @@ int main() {
             printf("option name EvalFile type string default %s\n", HasEmbeddedNNUE() ? "<embedded>" : "<empty>");
             printf("option name UCI_LimitStrength type check default false\n");
             printf("option name UCI_Elo type spin default 1500 min 1200 max 3100\n");
+            printf("option name MultiPV type spin default 1 min 1 max 256\n");
             printf("uciok\n");
         } else if(!strncmp(line, "setoption", 9)) {
             ParseOption(line);

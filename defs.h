@@ -116,6 +116,7 @@ extern TT TranspositionTable;
 extern int NNUE_Loaded;
 extern int LimitStrength;
 extern int UciElo;
+extern int MultiPV;
 extern uint64_t GameNoiseSeed;
 extern U64 SetMask[64];
 extern U64 ClearMask[64];
