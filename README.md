@@ -103,6 +103,7 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c nnue_embed.c polyglot.c search.c -lm
 | `EvalFile` | `string` | `<embedded>` | Path to a `(768 -> 256)x2` SCReLU `.nnue` network (`<embedded>` when built with `EMBED_NNUE=1`, `<empty>` otherwise). Falls back to HCE if missing. |
 | `UCI_LimitStrength` | `check` | `false` | Limit playing strength to the target `UCI_Elo` rating using node/depth caps, MultiPV Softmax sampling, and low-Elo evaluation noise. |
 | `UCI_Elo` | `spin` | `1500` | Target playing strength in Elo (`1200` to `3100`) when `UCI_LimitStrength` is enabled (`3100` corresponds to full strength). |
+| `MultiPV` | `spin` | `1` | Number of principal variations (top lines) to compute and display during analysis (`1` to `256`). Ignored when `UCI_LimitStrength` is enabled. |
 
 ## License
 
