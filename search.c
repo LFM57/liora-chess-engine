@@ -19,11 +19,11 @@ static int HasActivePieceJitter = 0;
 static const Personality Personalities[PERS_COUNT] = {
     // name          mat  pos  keep kAtk kSaf bPair pStr pass adv  contempt
     { "Standard",    100, 100,   0,   0,   0,    0,   0,   0,  0,    0 },
-    { "Aggressive",   92, 112,  +3, +12,   0,   +5,   0,   0, +6,  +30 },
+    { "Aggressive",   96, 108,  +3, +10,   0,   +5,   0,   0, +5,  +25 },
     { "Defensive",   115,  88,  -3,  -4, +16,    0, +10,   0, -4,  -25 },
-    { "Positional",   88, 130,   0,   0,  +4,  +25, +12, +15,  0,  +10 },
+    { "Positional",   96, 112,   0,   0,  +4,  +18, +10, +12,  0,  +10 },
     { "Endgame",     105, 110,  -6,  -5,  +4,  +15,  +8, +35,  0,  +20 },
-    { "Savage",       75, 125,  +5, +24,  -8,    0,  -5,   0, +12, +55 },
+    { "Savage",       86, 116,  +4, +18,  -6,    0,  -5,   0, +9,  +45 },
 };
 
 int ActivePersonalityId = PERS_STANDARD;
