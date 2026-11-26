@@ -609,7 +609,7 @@ void GenerateMoves(const Board *pos, Move *moveList, int *moveCount) {
         int from = __builtin_ctzll(pawns);
         pawns &= pawns - 1;
         
-        int r = from / 8;
+        int rank = from / 8;
         int c = from % 8;
         int forward = from + rankDir * 8;
         
@@ -624,7 +624,7 @@ void GenerateMoves(const Board *pos, Move *moveList, int *moveCount) {
             } else {
                 AddMove(moveList, moveCount, from, forward, EMPTY, EMPTY, 0);
                 // Double Push
-                if(r == startRank) {
+                if(rank == startRank) {
                     int doublePush = forward + rankDir * 8;
                     if(!(occ & SetMask[doublePush])) {
                         AddMove(moveList, moveCount, from, doublePush, EMPTY, EMPTY, 0);
@@ -786,7 +786,6 @@ void GenerateCaptures(const Board *pos, Move *moveList, int *moveCount) {
         int from = __builtin_ctzll(pawns);
         pawns &= pawns - 1;
         
-        int r = from / 8;
         int c = from % 8;
         
         // Push (Uniquement pour les promotions dans la recherche de captures)
