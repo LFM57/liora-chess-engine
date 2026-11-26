@@ -419,8 +419,252 @@ static int EvaluateRaw(const Board *pos) {
     return (pos->side == WHITE) ? score : -score;
 }
 
+static int ComputeMaterial(const Board *pos) {
+    static const int matVals[5] = { 100, 320, 330, 510, 950 };
+    int matWhite = 0;
+    for (int t = 0; t < 5; ++t) {
+        int diff = __builtin_popcountll(pos->pieces[t]) - __builtin_popcountll(pos->pieces[t + 6]);
+        matWhite += diff * matVals[t];
+    }
+    return (pos->side == WHITE) ? matWhite : -matWhite;
+}
+
+static void ComputeKingDanger(const Board *pos, int targetSide, U64 occ, int phase,
+                              int *outPieceAttacks, int *outShieldGaps) {
+    int ksq = (int)pos->king_sq[targetSide];
+    if (ksq < 0 || ksq >= 64) {
+        *outPieceAttacks = 0;
+        *outShieldGaps = 0;
+        return;
+    }
+
+    U64 kingRing = KingAttacks[ksq];
+    int attSide = targetSide ^ 1;
+    int attBase = (attSide == WHITE) ? P : p;
+    int units = 0;
+
+    // Enemy pawns attacking target king ring (weight 2 each)
+    U64 attPawns;
+    if (attSide == WHITE) {
+        attPawns = (((kingRing & ~FileMask[0]) >> 9) | ((kingRing & ~FileMask[7]) >> 7)) & pos->pieces[P];
+    } else {
+        attPawns = (((kingRing & ~FileMask[0]) << 7) | ((kingRing & ~FileMask[7]) << 9)) & pos->pieces[p];
+    }
+    units += 2 * __builtin_popcountll(attPawns);
+
+    // Enemy knights (weight 2 each)
+    U64 bb = pos->pieces[attBase + N];
+    while (bb) {
+        int sq = __builtin_ctzll(bb);
+        bb &= bb - 1;
+        if (KnightAttacks[sq] & kingRing) units += 2;
+    }
+
+    // Enemy bishops (weight 2 each)
+    bb = pos->pieces[attBase + B];
+    while (bb) {
+        int sq = __builtin_ctzll(bb);
+        bb &= bb - 1;
+        if (GetBishopAttacks(sq, occ) & kingRing) units += 2;
+    }
+
+    // Enemy rooks (weight 3 each)
+    bb = pos->pieces[attBase + R];
+    while (bb) {
+        int sq = __builtin_ctzll(bb);
+        bb &= bb - 1;
+        if (GetRookAttacks(sq, occ) & kingRing) units += 3;
+    }
+
+    // Enemy queens (weight 5 each)
+    bb = pos->pieces[attBase + Q];
+    while (bb) {
+        int sq = __builtin_ctzll(bb);
+        bb &= bb - 1;
+        if (GetQueenAttacks(sq, occ) & kingRing) units += 5;
+    }
+
+    if (units > 20) units = 20;
+    *outPieceAttacks = units;
+
+    // Pawn shield gaps on the 3 files [k_f - 1 .. k_f + 1] in front of king, scaled by phase / 24
+    int kf = ksq % 8;
+    int kr = ksq / 8;
+    int dir = (targetSide == WHITE) ? 1 : -1;
+    int r1 = kr + dir;
+    int r2 = kr + 2 * dir;
+    U64 ownPawns = pos->pieces[targetSide == WHITE ? P : p];
+    int rawGaps = 0;
+
+    for (int file = kf - 1; file <= kf + 1; ++file) {
+        if (file < 0 || file > 7) continue;
+        if (r1 >= 0 && r1 <= 7 && (ownPawns & SetMask[r1 * 8 + file])) {
+            // Intact shield pawn on immediate front rank
+        } else if (r2 >= 0 && r2 <= 7 && (ownPawns & SetMask[r2 * 8 + file])) {
+            rawGaps += 1;
+        } else {
+            rawGaps += 2;
+        }
+    }
+    *outShieldGaps = (rawGaps * phase) / 24;
+}
+
+static int EvaluatePersonalityDelta(const Board *pos, const Personality *pers) {
+    int phase = (pos->phase > 24) ? 24 : pos->phase;
+    if (phase < 0) phase = 0;
+
+    int rootBonus = 0;
+    int whiteBonus = 0;
+
+    // 1. Trade preference (keepPieces)
+    if (pers->keepPieces != 0) {
+        rootBonus += pers->keepPieces * phase;
+    }
+
+    // 2. Asymmetric King Attack vs. King Safety
+    if (pers->myKingAttack != 0 || pers->myKingSafety != 0) {
+        U64 occ = 0;
+        for (int i = 0; i < 12; ++i) occ |= pos->pieces[i];
+
+        int pieceAttackUnits[2] = { 0, 0 };
+        int shieldGapUnits[2] = { 0, 0 };
+        int enemySide = RootSide ^ 1;
+
+        if (pers->myKingAttack != 0) {
+            ComputeKingDanger(pos, enemySide, occ, phase,
+                              &pieceAttackUnits[enemySide], &shieldGapUnits[enemySide]);
+            int enemyUnits = pieceAttackUnits[enemySide] + shieldGapUnits[enemySide];
+            rootBonus += pers->myKingAttack * enemyUnits;
+        }
+
+        if (pers->myKingSafety != 0) {
+            ComputeKingDanger(pos, RootSide, occ, phase,
+                              &pieceAttackUnits[RootSide], &shieldGapUnits[RootSide]);
+            int safetyPieceWeight = (pers->myKingSafety > 0) ? pers->myKingSafety : 0;
+            rootBonus -= safetyPieceWeight * pieceAttackUnits[RootSide];
+            rootBonus -= pers->myKingSafety * shieldGapUnits[RootSide];
+        }
+    }
+
+    // 3. Bishop pair (symmetric)
+    if (pers->bishopPair != 0) {
+        int wBP = (__builtin_popcountll(pos->pieces[B]) >= 2) ? 1 : 0;
+        int bBP = (__builtin_popcountll(pos->pieces[b]) >= 2) ? 1 : 0;
+        whiteBonus += (wBP - bBP) * pers->bishopPair;
+    }
+
+    // 4. Pawn structure: doubled & isolated pawns (symmetric, only when pawnStruct > 0)
+    if (pers->pawnStruct > 0) {
+        U64 wp = pos->pieces[P];
+        U64 bp = pos->pieces[p];
+        int wWeak = 0, bWeak = 0;
+        for (int file = 0; file < 8; ++file) {
+            U64 adj = 0;
+            if (file > 0) adj |= FileMask[file - 1];
+            if (file < 7) adj |= FileMask[file + 1];
+
+            U64 wf = wp & FileMask[file];
+            if (wf) {
+                int cnt = __builtin_popcountll(wf);
+                if (cnt > 1) wWeak += (cnt - 1);
+                if ((wp & adj) == 0) wWeak += cnt;
+            }
+
+            U64 bf = bp & FileMask[file];
+            if (bf) {
+                int cnt = __builtin_popcountll(bf);
+                if (cnt > 1) bWeak += (cnt - 1);
+                if ((bp & adj) == 0) bWeak += cnt;
+            }
+        }
+        whiteBonus += (bWeak - wWeak) * pers->pawnStruct;
+    }
+
+    // 5. Endgame passed pawns & king centralization (symmetric, scaled by (24 - phase) / 24)
+    if (pers->passedPawn != 0 && phase < 24) {
+        static const int passRankBonus[8] = { 0, 10, 20, 40, 70, 110, 160, 0 };
+        U64 wp = pos->pieces[P];
+        U64 bp = pos->pieces[p];
+        int egRawWhite = 0;
+
+        U64 bb = wp;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            bb &= bb - 1;
+            int file = sq % 8;
+            int rank = sq / 8;
+            U64 mask = FileMask[file];
+            if (file > 0) mask |= FileMask[file - 1];
+            if (file < 7) mask |= FileMask[file + 1];
+            U64 ahead = (rank < 7) ? (0xFFFFFFFFFFFFFFFFULL << (8 * (rank + 1))) : 0ULL;
+            if ((mask & ahead & bp) == 0) {
+                egRawWhite += passRankBonus[rank];
+            }
+        }
+
+        bb = bp;
+        while (bb) {
+            int sq = __builtin_ctzll(bb);
+            bb &= bb - 1;
+            int file = sq % 8;
+            int rank = sq / 8;
+            U64 mask = FileMask[file];
+            if (file > 0) mask |= FileMask[file - 1];
+            if (file < 7) mask |= FileMask[file + 1];
+            U64 ahead = (rank > 0) ? ((1ULL << (8 * rank)) - 1ULL) : 0ULL;
+            if ((mask & ahead & wp) == 0) {
+                egRawWhite -= passRankBonus[7 - rank];
+            }
+        }
+
+        // King centralization in endgame
+        int wksq = (int)pos->king_sq[WHITE];
+        int bksq = (int)pos->king_sq[BLACK];
+        int wCenterDist = abs(2 * (wksq % 8) - 7) + abs(2 * (wksq / 8) - 7);
+        int bCenterDist = abs(2 * (bksq % 8) - 7) + abs(2 * (bksq / 8) - 7);
+        egRawWhite += (bCenterDist - wCenterDist) * 4;
+
+        whiteBonus += (egRawWhite * pers->passedPawn * (24 - phase)) / 2400;
+    }
+
+    // 6. Piece advancement in enemy territory (asymmetric for RootSide)
+    if (pers->advancePiece != 0) {
+        U64 enemyHalf = (RootSide == WHITE)
+            ? (RankMask[4] | RankMask[5] | RankMask[6] | RankMask[7])
+            : (RankMask[0] | RankMask[1] | RankMask[2] | RankMask[3]);
+        int base = (RootSide == WHITE) ? P : p;
+        U64 myNonKing = pos->pieces[base] | pos->pieces[base + 1] |
+                        pos->pieces[base + 2] | pos->pieces[base + 3] | pos->pieces[base + 4];
+        rootBonus += pers->advancePiece * __builtin_popcountll(myNonKing & enemyHalf);
+    }
+
+    int rootSign = (pos->side == RootSide) ? 1 : -1;
+    int sideSign = (pos->side == WHITE) ? 1 : -1;
+    int delta = rootSign * rootBonus + sideSign * whiteBonus;
+
+    int clampLimit = (ActivePersonalityId == PERS_SAVAGE) ? 140 : 85;
+    if (delta > clampLimit) delta = clampLimit;
+    if (delta < -clampLimit) delta = -clampLimit;
+    return delta;
+}
+
+static int ApplyPersonalityEval(const Board *pos, int rawEval) {
+    if (ActivePersonalityId == PERS_STANDARD) {
+        return rawEval;
+    }
+    const Personality *pers = ActivePersonality;
+    int mat = ComputeMaterial(pos);
+    int positional = rawEval - mat;
+    int eval = (mat * pers->materialWeight + positional * pers->positionalWeight) / 100;
+    eval += EvaluatePersonalityDelta(pos, pers);
+    return eval;
+}
+
 int Evaluate(const Board *pos) {
     int eval = EvaluateRaw(pos);
+    if (ActivePersonalityId != PERS_STANDARD) {
+        eval = ApplyPersonalityEval(pos, eval);
+    }
     if (HasActivePieceJitter) {
         int jitter = 0;
         for (int t = 0; t < 5; ++t) {
@@ -855,7 +1099,15 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
     if(StopSearch) return 0;
     Nodes++;
     
-    if(pos->ply > 0 && (IsRepetition(pos) || pos->fiftyMove >= 100)) return 0;
+    if (pos->ply > 0 && (IsRepetition(pos) || pos->fiftyMove >= 100)) {
+        if (ActivePersonalityId == PERS_STANDARD || ActivePersonality->contempt == 0) {
+            return 0;
+        }
+        int phase = (pos->phase > 24) ? 24 : pos->phase;
+        if (phase < 0) phase = 0;
+        int drawScore = (ActivePersonality->contempt * phase) / 24;
+        return (pos->side == RootSide) ? -drawScore : drawScore;
+    }
     
     // Check Extension (étendue à tous les nœuds pour ne pas rater les combinaisons)
     int inCheck = SqAttacked(pos->king_sq[pos->side], (pos->side^1), pos);
