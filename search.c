@@ -11,6 +11,10 @@ _Static_assert(sizeof(TTCluster) == 64, "TTCluster must be 64 bytes");
 uint8_t TTAge = 0;
 uint64_t GameNoiseSeed = 0;
 int EvalNoiseAmp = 0;
+int MaxQDepth = 0;
+static double GamePieceJitterSeed[5] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
+static int ActivePieceJitter[5] = { 0, 0, 0, 0, 0 };
+static int HasActivePieceJitter = 0;
 
 static uint64_t SplitMix64(uint64_t x) {
     x += 0x9e3779b97f4a7c15ULL;
@@ -35,6 +39,11 @@ static uint64_t NextRngU64(uint64_t *state) {
 void ReseedGameNoise(void) {
     static uint64_t rngState = 0;
     GameNoiseSeed = NextRngU64(&rngState);
+    for (int t = 0; t < 5; ++t) {
+        uint64_t h = SplitMix64(GameNoiseSeed ^ (0x9e3779b97f4a7c15ULL * (uint64_t)(t + 1)));
+        double u = (double)(h >> 11) * (1.0 / 9007199254740992.0);
+        GamePieceJitterSeed[t] = 2.0 * u - 1.0;
+    }
 }
 
 static int PositionNoise(U64 posKey, uint64_t seed, int amp) {
@@ -48,75 +57,106 @@ typedef struct {
     int elo;
     int maxDepth;
     uint64_t maxNodes;
-    int multiPV;
-    double tempCp;
+    int maxQDepth;
+    double tempWdl;
     int evalNoise;
+    int pieceJitter;
+    int maxBookPly;
 } EloLevel;
 
 typedef struct {
     int maxDepth;
     uint64_t maxNodes;
-    int multiPV;
-    double tempCp;
+    int maxQDepth;
+    double tempWdl;
     int evalNoise;
+    int pieceJitter;
+    int maxBookPly;
 } StrengthParams;
 
 static const EloLevel EloTable[] = {
-    { 1200,  2,      80ULL, 8, 180.0, 160 },
-    { 1400,  3,     200ULL, 6, 110.0,  90 },
-    { 1600,  5,     600ULL, 5,  65.0,  25 },
-    { 1800,  7,    1800ULL, 4,  38.0,   0 },
-    { 2100, 10,    6000ULL, 3,  20.0,   0 },
-    { 2400, 13,   25000ULL, 2,  10.0,   0 },
-    { 2750, 18,  150000ULL, 1,   0.0,   0 },
-    { 3000, 24,  750000ULL, 1,   0.0,   0 },
-    { 3100, 64,       0ULL, 1,   0.0,   0 }
+    { 1200,  2,      45ULL, 1, 0.220, 50, 25,  0 },
+    { 1400,  3,     100ULL, 2, 0.150, 30, 15,  0 },
+    { 1600,  5,     250ULL, 4, 0.095, 15,  8,  4 },
+    { 1800,  7,     700ULL, 0, 0.055,  0,  0,  6 },
+    { 2100, 10,    2500ULL, 0, 0.030,  0,  0,  9 },
+    { 2400, 13,   10000ULL, 0, 0.015,  0,  0, 14 },
+    { 2750, 18,   45000ULL, 0, 0.000,  0,  0, 20 },
+    { 3000, 24,  200000ULL, 0, 0.000,  0,  0, -1 },
+    { 3100, 64,       0ULL, 0, 0.000,  0,  0, -1 }
 };
 
 static StrengthParams GetStrengthParams(int elo) {
     const int numLevels = (int)(sizeof(EloTable) / sizeof(EloTable[0]));
     if (elo <= EloTable[0].elo) {
         StrengthParams p = {
-            EloTable[0].maxDepth, EloTable[0].maxNodes,
-            EloTable[0].multiPV, EloTable[0].tempCp, EloTable[0].evalNoise
+            EloTable[0].maxDepth, EloTable[0].maxNodes, EloTable[0].maxQDepth,
+            EloTable[0].tempWdl, EloTable[0].evalNoise, EloTable[0].pieceJitter,
+            EloTable[0].maxBookPly
         };
         return p;
     }
     if (elo >= EloTable[numLevels - 1].elo) {
         StrengthParams p = {
             EloTable[numLevels - 1].maxDepth, EloTable[numLevels - 1].maxNodes,
-            EloTable[numLevels - 1].multiPV, EloTable[numLevels - 1].tempCp,
-            EloTable[numLevels - 1].evalNoise
+            EloTable[numLevels - 1].maxQDepth, EloTable[numLevels - 1].tempWdl,
+            EloTable[numLevels - 1].evalNoise, EloTable[numLevels - 1].pieceJitter,
+            EloTable[numLevels - 1].maxBookPly
         };
         return p;
     }
 
     for (int i = 0; i < numLevels - 1; ++i) {
-        if (elo >= EloTable[i].elo && elo <= EloTable[i + 1].elo) {
+        if (elo >= EloTable[i].elo && elo < EloTable[i + 1].elo) {
             const EloLevel *a = &EloTable[i];
             const EloLevel *b = &EloTable[i + 1];
             double t = (double)(elo - a->elo) / (double)(b->elo - a->elo);
 
             StrengthParams p;
             p.maxDepth = (int)lround(a->maxDepth * (1.0 - t) + b->maxDepth * t);
-            p.multiPV = (int)lround(a->multiPV * (1.0 - t) + b->multiPV * t);
-            p.tempCp = a->tempCp * (1.0 - t) + b->tempCp * t;
+            p.tempWdl = a->tempWdl * (1.0 - t) + b->tempWdl * t;
             p.evalNoise = (int)lround(a->evalNoise * (1.0 - t) + b->evalNoise * t);
+            p.pieceJitter = (int)lround(a->pieceJitter * (1.0 - t) + b->pieceJitter * t);
 
             // Strength scales roughly linearly with log(nodes)
-            double aNodes = (a->maxNodes > 0) ? (double)a->maxNodes : 2000000.0;
-            double bNodes = (b->maxNodes > 0) ? (double)b->maxNodes : 2000000.0;
-            p.maxNodes = (uint64_t)llround(exp(log(aNodes) * (1.0 - t) + log(bNodes) * t));
+            if (a->maxNodes == 0 && b->maxNodes == 0) {
+                p.maxNodes = 0;
+            } else {
+                double aNodes = (a->maxNodes > 0) ? (double)a->maxNodes : 2000000.0;
+                double bNodes = (b->maxNodes > 0) ? (double)b->maxNodes : 2000000.0;
+                p.maxNodes = (uint64_t)llround(exp(log(aNodes) * (1.0 - t) + log(bNodes) * t));
+                if (p.maxNodes < 1) p.maxNodes = 1;
+            }
+
+            // 0 means unlimited Q-depth (>= 1800); substitute 8 when bracketing a positive anchor
+            if ((a->maxQDepth == 0 && b->maxQDepth == 0) || elo >= 1800) {
+                p.maxQDepth = 0;
+            } else {
+                double aQ = (a->maxQDepth > 0) ? (double)a->maxQDepth : 8.0;
+                double bQ = (b->maxQDepth > 0) ? (double)b->maxQDepth : 8.0;
+                p.maxQDepth = (int)lround(aQ * (1.0 - t) + bQ * t);
+                if (p.maxQDepth < 1) p.maxQDepth = 1;
+            }
+
+            // -1 means unlimited book ply; substitute 24 when bracketing a finite anchor
+            if (a->maxBookPly < 0 && b->maxBookPly < 0) {
+                p.maxBookPly = -1;
+            } else {
+                double aBook = (a->maxBookPly < 0) ? 24.0 : (double)a->maxBookPly;
+                double bBook = (b->maxBookPly < 0) ? 24.0 : (double)b->maxBookPly;
+                p.maxBookPly = (int)lround(aBook * (1.0 - t) + bBook * t);
+                if (p.maxBookPly < 0) p.maxBookPly = 0;
+            }
 
             if (p.maxDepth < 1) p.maxDepth = 1;
-            if (p.maxNodes < 1) p.maxNodes = 1;
-            if (p.multiPV < 1) p.multiPV = 1;
+            if (p.tempWdl < 0.0) p.tempWdl = 0.0;
             if (p.evalNoise < 0) p.evalNoise = 0;
+            if (p.pieceJitter < 0) p.pieceJitter = 0;
             return p;
         }
     }
 
-    StrengthParams fallback = { MAX_DEPTH, 0ULL, 1, 0.0, 0 };
+    StrengthParams fallback = { MAX_DEPTH, 0ULL, 0, 0.0, 0, 0, -1 };
     return fallback;
 }
 
@@ -342,6 +382,16 @@ static int EvaluateRaw(const Board *pos) {
 
 int Evaluate(const Board *pos) {
     int eval = EvaluateRaw(pos);
+    if (HasActivePieceJitter) {
+        int jitter = 0;
+        for (int t = 0; t < 5; ++t) {
+            if (ActivePieceJitter[t] != 0) {
+                int diff = __builtin_popcountll(pos->pieces[t]) - __builtin_popcountll(pos->pieces[t + 6]);
+                jitter += ActivePieceJitter[t] * diff;
+            }
+        }
+        eval += (pos->side == WHITE) ? jitter : -jitter;
+    }
     if (EvalNoiseAmp > 0) {
         eval += PositionNoise(pos->posKey, GameNoiseSeed, EvalNoiseAmp);
     }
@@ -623,10 +673,14 @@ int SEE(const Board *pos, Move move, int threshold) {
     return (r[0] >= threshold);
 }
 
-int Quiescence(Board *pos, int alpha, int beta) {
+int Quiescence(Board *pos, int alpha, int beta, int qply) {
     Nodes++;
     CheckTime();
     if(StopSearch) return 0;
+
+    if (MaxQDepth > 0 && qply >= MaxQDepth) {
+        return Evaluate(pos);
+    }
     
     // TT Probe
     TTEntry* tte = ProbeTT(pos->posKey);
@@ -660,7 +714,9 @@ int Quiescence(Board *pos, int alpha, int beta) {
     if (!inCheck) {
         score = Evaluate(pos);
         if(score >= beta) {
-            StoreTT(pos->posKey, 0, beta, 2, bestMoveTT, pos->ply);
+            if (!(MaxQDepth > 0 && qply > 0)) {
+                StoreTT(pos->posKey, 0, beta, 2, bestMoveTT, pos->ply);
+            }
             return beta;
         }
         if(score > alpha) alpha = score;
@@ -719,7 +775,7 @@ int Quiescence(Board *pos, int alpha, int beta) {
         Move move = moves[i];
         if(!MakeMove(pos, move)) continue;
         legalMoves++;
-        int val = -Quiescence(pos, -beta, -alpha);
+        int val = -Quiescence(pos, -beta, -alpha, qply + 1);
         TakeMove(pos, move);
         
         if(StopSearch) return 0;
@@ -746,7 +802,9 @@ int Quiescence(Board *pos, int alpha, int beta) {
     else if (bestScore > oldAlpha) flag = 0; // Exact
     
     int ttScore = (flag == 1) ? alpha : bestScore;
-    StoreTT(pos->posKey, 0, ttScore, flag, bestMove, pos->ply);
+    if (!(MaxQDepth > 0 && qply > 0)) {
+        StoreTT(pos->posKey, 0, ttScore, flag, bestMove, pos->ply);
+    }
     return (bestScore > alpha) ? bestScore : alpha;
 }
 
@@ -767,7 +825,7 @@ int Negamax(Board *pos, int depth, int alpha, int beta, int allow_null, Move* pv
         depth++;
     }
 
-    if(depth <= 0) return Quiescence(pos, alpha, beta);
+    if(depth <= 0) return Quiescence(pos, alpha, beta, 0);
     
     CheckTime();
     
@@ -1127,6 +1185,47 @@ static void PrintMoveUci(Move move) {
     }
 }
 
+static void PrintUciScore(int score) {
+    if (score > MATE_SCORE - MAX_DEPTH) {
+        int plies = MATE_SCORE - score;
+        int moves = (plies + 1) / 2;
+        if (moves < 1) moves = 1;
+        printf("score mate %d", moves);
+    } else if (score < -MATE_SCORE + MAX_DEPTH) {
+        int plies = MATE_SCORE + score;
+        int moves = (plies + 1) / 2;
+        if (moves < 1) moves = 1;
+        printf("score mate -%d", moves);
+    } else {
+        printf("score cp %d", score);
+    }
+}
+
+static double CpToWdl(int cp) {
+    if (cp > 4000) cp = 4000;
+    if (cp < -4000) cp = -4000;
+    return 1.0 / (1.0 + exp(-(double)cp / 400.0));
+}
+
+static int WdlFloorCp(int bestScore, double tempWdl) {
+    int mateFloor = -MATE_SCORE + MAX_DEPTH + 100;
+    double targetWdl = CpToWdl(bestScore) - 4.0 * tempWdl;
+    int floorCp;
+    if (targetWdl <= 0.01) {
+        floorCp = bestScore - 600;
+    } else {
+        if (targetWdl >= 0.999999) targetWdl = 0.999999;
+        int rawFloor = (int)floor(400.0 * log(targetWdl / (1.0 - targetWdl)));
+        int drop = bestScore - rawFloor;
+        if (drop < 150) drop = 150;
+        if (drop > 600) drop = 600;
+        floorCp = bestScore - drop;
+    }
+    if (floorCp < mateFloor) floorCp = mateFloor;
+    if (floorCp > bestScore) floorCp = bestScore;
+    return floorCp;
+}
+
 typedef struct {
     Move move;
     int score;
@@ -1137,11 +1236,17 @@ static int SameMove(Move a, Move b) {
     return a.from == b.from && a.to == b.to && a.promoted == b.promoted;
 }
 
-static int IsMoveInCandidates(Move move, const RootCandidate *cands, int numCands) {
-    for (int i = 0; i < numCands; ++i) {
-        if (SameMove(move, cands[i].move)) return 1;
+static int ScoreRootMove(const Board *pos, Move move) {
+    if (move.promoted != EMPTY) {
+        return 150000 + move.promoted;
     }
-    return 0;
+    if (move.capture != EMPTY) {
+        int pType = pos->board[move.from];
+        int attacker = (pType != EMPTY) ? (pType % 6) : P;
+        return 100000 + MvvLva[attacker][move.capture % 6];
+    }
+    int hScore = History[pos->side][move.from][move.to];
+    return (hScore > 70000) ? 70000 : hScore;
 }
 
 static int CollectLegalRootMoves(Board *pos, Move *legalMoves, int *moveOrderScores) {
@@ -1154,13 +1259,7 @@ static int CollectLegalRootMoves(Board *pos, Move *legalMoves, int *moveOrderSco
         if (MakeMove(pos, rawMoves[i])) {
             TakeMove(pos, rawMoves[i]);
             legalMoves[numLegal] = rawMoves[i];
-            if (rawMoves[i].promoted != EMPTY) {
-                moveOrderScores[numLegal] = 150000 + rawMoves[i].promoted;
-            } else if (rawMoves[i].capture != EMPTY) {
-                moveOrderScores[numLegal] = 100000 + PieceValuesMG[rawMoves[i].capture % 6];
-            } else {
-                moveOrderScores[numLegal] = History[pos->side][rawMoves[i].from][rawMoves[i].to];
-            }
+            moveOrderScores[numLegal] = ScoreRootMove(pos, rawMoves[i]);
             numLegal++;
         }
     }
@@ -1184,81 +1283,53 @@ static void SortMovesByScore(Move *moves, int *scores, int count) {
     }
 }
 
-/* Search all legal root moves excluding already-selected MultiPV candidates. */
-static int SearchBestRemainingRootMove(Board *pos, int depth, const Move *legalMoves, int numLegal,
-                                       const RootCandidate *excluded, int numExcluded,
-                                       RootCandidate *outCand) {
-    int alpha = -INF;
-    int beta = INF;
-    int bestIdx = -1;
-    int bestScore = -INF;
-    Move bestChildPv[MAX_DEPTH];
-    bestChildPv[0].from = NO_SQ;
-
-    for (int m = 0; m < numLegal; ++m) {
-        if (IsMoveInCandidates(legalMoves[m], excluded, numExcluded)) continue;
-        if (!MakeMove(pos, legalMoves[m])) continue;
-
-        Move childPv[MAX_DEPTH];
-        childPv[0].from = NO_SQ;
-        int score;
-        if (bestIdx == -1) {
-            score = -Negamax(pos, depth - 1, -beta, -alpha, 1, childPv);
-        } else {
-            score = -Negamax(pos, depth - 1, -alpha - 1, -alpha, 1, childPv);
-            if (!StopSearch && score > alpha && score < beta) {
-                childPv[0].from = NO_SQ;
-                score = -Negamax(pos, depth - 1, -beta, -alpha, 1, childPv);
-            }
+static void SortCandidatesDesc(RootCandidate *cands, int count) {
+    for (int i = 1; i < count; ++i) {
+        RootCandidate key = cands[i];
+        int j = i - 1;
+        while (j >= 0 && cands[j].score < key.score) {
+            cands[j + 1] = cands[j];
+            j--;
         }
-
-        TakeMove(pos, legalMoves[m]);
-        if (StopSearch) return 0;
-
-        if (score > bestScore) {
-            bestScore = score;
-            bestIdx = m;
-            alpha = score;
-            int j = 0;
-            while (childPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
-                bestChildPv[j] = childPv[j];
-                j++;
-            }
-            bestChildPv[j].from = NO_SQ;
-        }
+        cands[j + 1] = key;
     }
-
-    if (bestIdx == -1) return 0;
-
-    outCand->move = legalMoves[bestIdx];
-    outCand->score = bestScore;
-    outCand->pv[0] = legalMoves[bestIdx];
-    int j = 0;
-    while (bestChildPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
-        outCand->pv[j + 1] = bestChildPv[j];
-        j++;
-    }
-    outCand->pv[j + 1].from = NO_SQ;
-    return 1;
 }
 
-static Move PickLimitedStrengthMove(const RootCandidate *cands, int numCands, double tempCp) {
+static Move PickLimitedStrengthMove(const Board *pos, const RootCandidate *cands, int numCands,
+                                    int uciElo, double tempWdl) {
     Move empty = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     if (numCands <= 0) return empty;
-    if (numCands == 1 || tempCp <= 0.0) return cands[0].move;
+    if (numCands == 1 || tempWdl <= 0.0) return cands[0].move;
 
     int bestScore = cands[0].score;
-    if (bestScore > MATE_SCORE - MAX_DEPTH) {
+    if (bestScore > MATE_SCORE - MAX_DEPTH || bestScore < -MATE_SCORE + MAX_DEPTH) {
         return cands[0].move;
     }
 
+    double effTempWdl = tempWdl;
+    if (numCands >= 2 && pos->hisPly > 0) {
+        int lastToSq = (pos->historyMove[pos->hisPly - 1] >> 6) & 63;
+        if (cands[0].move.to == lastToSq && cands[0].move.capture != EMPTY &&
+            (cands[0].score - cands[1].score) >= 150) {
+            if (uciElo >= 1500) {
+                return cands[0].move;
+            } else {
+                effTempWdl /= 4.0;
+            }
+        }
+    }
+
+    double bestWdl = CpToWdl(bestScore);
     double weights[MAX_MOVES];
     double sumWeights = 0.0;
     for (int i = 0; i < numCands; ++i) {
-        double diff = (double)(bestScore - cands[i].score);
-        if (diff < 0.0) diff = 0.0;
-        if (diff > 2000.0) diff = 2000.0;
-        weights[i] = exp(-diff / tempCp);
+        if (cands[i].score < -MATE_SCORE + MAX_DEPTH) {
+            weights[i] = 0.0;
+            continue;
+        }
+        double wdlDiff = bestWdl - CpToWdl(cands[i].score);
+        if (wdlDiff < 0.0) wdlDiff = 0.0;
+        weights[i] = exp(-wdlDiff / effTempWdl);
         sumWeights += weights[i];
     }
 
@@ -1275,19 +1346,18 @@ static Move PickLimitedStrengthMove(const RootCandidate *cands, int numCands, do
     return cands[0].move;
 }
 
-static Move SearchRootMultiPV(Board *pos, int maxDepth, long optTime, const StrengthParams *params) {
+static Move SearchRootWindowed(Board *pos, int maxDepth, long optTime, const StrengthParams *params) {
     Move legalMoves[MAX_MOVES];
     int moveOrderScores[MAX_MOVES];
     int numLegal = CollectLegalRootMoves(pos, legalMoves, moveOrderScores);
 
     Move empty = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     if (numLegal == 0) return empty;
-
-    int targetPV = (params->multiPV < numLegal) ? params->multiPV : numLegal;
-    if (targetPV < 1) targetPV = 1;
+    if (numLegal == 1) return legalMoves[0];
 
     RootCandidate completedCands[MAX_MOVES];
     int numCompleted = 0;
+    Move pass1Best = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
 
     int inCheckRoot = SqAttacked(pos->king_sq[pos->side], pos->side ^ 1, pos);
     int rootEval = inCheckRoot ? -INF : Evaluate(pos);
@@ -1297,38 +1367,122 @@ static Move SearchRootMultiPV(Board *pos, int maxDepth, long optTime, const Stre
         EvalStack[0] = rootEval;
         SortMovesByScore(legalMoves, moveOrderScores, numLegal);
 
-        RootCandidate currentCands[MAX_MOVES];
-        int numCurrent = 0;
-        for (int pvIdx = 0; pvIdx < targetPV; ++pvIdx) {
-            if (!SearchBestRemainingRootMove(pos, d, legalMoves, numLegal,
-                                             currentCands, numCurrent,
-                                             &currentCands[numCurrent])) {
+        // Pass 1: Single-PV Root Search
+        int alpha = -INF;
+        int beta = INF;
+        int bestIdx = -1;
+        int bestScore = -INF;
+        Move bestPv[MAX_DEPTH];
+        bestPv[0].from = NO_SQ;
+
+        for (int m = 0; m < numLegal; ++m) {
+            if (!MakeMove(pos, legalMoves[m])) continue;
+
+            Move childPv[MAX_DEPTH];
+            childPv[0].from = NO_SQ;
+            int score;
+            if (bestIdx == -1) {
+                score = -Negamax(pos, d - 1, -beta, -alpha, 1, childPv);
+            } else {
+                score = -Negamax(pos, d - 1, -alpha - 1, -alpha, 1, childPv);
+                if (!StopSearch && score > alpha && score < beta) {
+                    childPv[0].from = NO_SQ;
+                    score = -Negamax(pos, d - 1, -beta, -alpha, 1, childPv);
+                }
+            }
+
+            TakeMove(pos, legalMoves[m]);
+            if (StopSearch) {
+                if (d == 1 && bestIdx != -1) {
+                    pass1Best = legalMoves[bestIdx];
+                }
                 break;
             }
-            numCurrent++;
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestIdx = m;
+                alpha = score;
+                bestPv[0] = legalMoves[m];
+                int j = 0;
+                while (childPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
+                    bestPv[j + 1] = childPv[j];
+                    j++;
+                }
+                bestPv[j + 1].from = NO_SQ;
+            }
+        }
+
+        if (StopSearch || bestIdx == -1) {
+            break;
+        }
+        if (d == 1) {
+            pass1Best = legalMoves[bestIdx];
+        }
+
+        // Pass 2: Single-Pass Windowed Candidate Search
+        RootCandidate currentCands[MAX_MOVES];
+        int numCurrent = 0;
+        currentCands[0].move = legalMoves[bestIdx];
+        currentCands[0].score = bestScore;
+        memcpy(currentCands[0].pv, bestPv, sizeof(bestPv));
+        numCurrent = 1;
+
+        if (bestScore <= MATE_SCORE - MAX_DEPTH && bestScore >= -MATE_SCORE + MAX_DEPTH) {
+            int floorScore = WdlFloorCp(bestScore, params->tempWdl);
+            for (int m = 0; m < numLegal; ++m) {
+                if (m == bestIdx) continue;
+                if (!MakeMove(pos, legalMoves[m])) continue;
+
+                Move childPv[MAX_DEPTH];
+                childPv[0].from = NO_SQ;
+                int score = -Negamax(pos, d - 1, -(bestScore + 1), -(floorScore - 1), 1, childPv);
+                if (!StopSearch && score >= bestScore + 1) {
+                    childPv[0].from = NO_SQ;
+                    score = -Negamax(pos, d - 1, -INF, -(floorScore - 1), 1, childPv);
+                }
+
+                TakeMove(pos, legalMoves[m]);
+                if (StopSearch) break;
+
+                if (score >= floorScore && numCurrent < MAX_MOVES) {
+                    currentCands[numCurrent].move = legalMoves[m];
+                    currentCands[numCurrent].score = score;
+                    currentCands[numCurrent].pv[0] = legalMoves[m];
+                    int j = 0;
+                    while (childPv[j].from != NO_SQ && j < MAX_DEPTH - 2) {
+                        currentCands[numCurrent].pv[j + 1] = childPv[j];
+                        j++;
+                    }
+                    currentCands[numCurrent].pv[j + 1].from = NO_SQ;
+                    numCurrent++;
+                }
+            }
         }
 
         // Discard partial depth results so Softmax never samples an incomplete pass
-        if (StopSearch || numCurrent < targetPV) {
+        if (StopSearch) {
             break;
         }
 
+        SortCandidatesDesc(currentCands, numCurrent);
         memcpy(completedCands, currentCands, (size_t)numCurrent * sizeof(RootCandidate));
         numCompleted = numCurrent;
 
         for (int m = 0; m < numLegal; ++m) {
-            moveOrderScores[m] = -1000000;
+            moveOrderScores[m] = ScoreRootMove(pos, legalMoves[m]);
             for (int k = 0; k < numCompleted; ++k) {
                 if (SameMove(legalMoves[m], completedCands[k].move)) {
-                    moveOrderScores[m] = 1000000 + (numCompleted - k) * 10000 + completedCands[k].score;
+                    moveOrderScores[m] = 2000000 + (numCompleted - k) * 10000 + completedCands[k].score;
                     break;
                 }
             }
         }
 
         long t = GetTimeMs() - StartTime;
-        printf("info depth %d score cp %d nodes %llu time %ld pv ",
-               d, completedCands[0].score, (unsigned long long)Nodes, t);
+        printf("info depth %d ", d);
+        PrintUciScore(completedCands[0].score);
+        printf(" nodes %llu time %ld pv ", (unsigned long long)Nodes, t);
         for (int j = 0; completedCands[0].pv[j].from != NO_SQ && j < MAX_DEPTH; ++j) {
             PrintMoveUci(completedCands[0].pv[j]);
             printf(" ");
@@ -1340,7 +1494,10 @@ static Move SearchRootMultiPV(Board *pos, int maxDepth, long optTime, const Stre
     }
 
     if (numCompleted > 0) {
-        return PickLimitedStrengthMove(completedCands, numCompleted, params->tempCp);
+        return PickLimitedStrengthMove(pos, completedCands, numCompleted, UciElo, params->tempWdl);
+    }
+    if (pass1Best.from != NO_SQ) {
+        return pass1Best;
     }
 
     return legalMoves[0];
@@ -1351,7 +1508,10 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     StopSearch = 0;
     Nodes = 0;
     MaxNodes = 0;
+    MaxQDepth = 0;
     EvalNoiseAmp = 0;
+    memset(ActivePieceJitter, 0, sizeof(ActivePieceJitter));
+    HasActivePieceJitter = 0;
     CurrentSearchDepth = 0;
     StartTime = GetTimeMs();
     
@@ -1402,10 +1562,16 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
 
     StopTime = StartTime + max_time;
     if(depth == -1) depth = MAX_DEPTH;
+
+    StrengthParams params = { MAX_DEPTH, 0ULL, 0, 0.0, 0, 0, -1 };
+    if (LimitStrength) {
+        params = GetStrengthParams(UciElo);
+    }
     
     // --- OPENING BOOK CHECK ---
-    if (!LimitStrength || UciElo >= 2200) {
-        Move bookMove = GetBookMove(pos);
+    if (!LimitStrength || params.maxBookPly < 0 || pos->hisPly < params.maxBookPly) {
+        double bookExp = (!LimitStrength || UciElo >= 2200) ? 1.0 : 0.5;
+        Move bookMove = GetBookMoveWeighted(pos, bookExp);
         if(bookMove.from != NO_SQ) {
             char *files = "abcdefgh";
             char *ranks = "12345678";
@@ -1427,11 +1593,18 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     }
     // --------------------------
 
-    StrengthParams params = { MAX_DEPTH, 0ULL, 1, 0.0, 0 };
     if (LimitStrength) {
-        params = GetStrengthParams(UciElo);
         MaxNodes = params.maxNodes;
+        MaxQDepth = params.maxQDepth;
         EvalNoiseAmp = params.evalNoise;
+        if (params.pieceJitter > 0) {
+            for (int t = 0; t < 5; ++t) {
+                ActivePieceJitter[t] = (int)lround(GamePieceJitterSeed[t] * (double)params.pieceJitter);
+                if (ActivePieceJitter[t] != 0) {
+                    HasActivePieceJitter = 1;
+                }
+            }
+        }
         if (depth > params.maxDepth) {
             depth = params.maxDepth;
         }
@@ -1440,8 +1613,8 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
     // CORRECTION : Toujours initialiser avec EMPTY (12) et pas 0 (qui est le pion P)
     Move bestMoveSoFar = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
 
-    if (LimitStrength && params.multiPV > 1) {
-        bestMoveSoFar = SearchRootMultiPV(pos, depth, opt_time, &params);
+    if (LimitStrength && params.tempWdl > 0.0) {
+        bestMoveSoFar = SearchRootWindowed(pos, depth, opt_time, &params);
     } else {
     Move pvLine[MAX_DEPTH];
     
@@ -1642,7 +1815,10 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
     static Board gPos;
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
     MaxNodes = 0;
+    MaxQDepth = 0;
     EvalNoiseAmp = 0;
+    memset(ActivePieceJitter, 0, sizeof(ActivePieceJitter));
+    HasActivePieceJitter = 0;
     CurrentSearchDepth = 0;
     ClearTT(); // Clear TT once before data generation starts
 
