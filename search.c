@@ -75,15 +75,15 @@ typedef struct {
 } StrengthParams;
 
 static const EloLevel EloTable[] = {
-    { 1200,  2,      45ULL, 1, 0.220, 50, 25,  0 },
-    { 1400,  3,     100ULL, 2, 0.150, 30, 15,  0 },
-    { 1600,  5,     250ULL, 4, 0.095, 15,  8,  4 },
-    { 1800,  7,     700ULL, 0, 0.055,  0,  0,  6 },
-    { 2100, 10,    2500ULL, 0, 0.030,  0,  0,  9 },
-    { 2400, 13,   10000ULL, 0, 0.015,  0,  0, 14 },
-    { 2750, 18,   45000ULL, 0, 0.000,  0,  0, 20 },
-    { 3000, 24,  200000ULL, 0, 0.000,  0,  0, -1 },
-    { 3100, 64,       0ULL, 0, 0.000,  0,  0, -1 }
+    { 1200,  3,     3200ULL, 2, 0.0345, 20, 10,  0 },
+    { 1400,  4,     4800ULL, 3, 0.0285, 14,  7,  0 },
+    { 1600,  6,    11500ULL, 6, 0.0172,  3,  1,  4 },
+    { 1800,  8,    16500ULL, 0, 0.0146,  0,  0,  6 },
+    { 2100, 11,    26000ULL, 0, 0.0110,  0,  0,  9 },
+    { 2400, 14,    50000ULL, 0, 0.0070,  0,  0, 14 },
+    { 2750, 18,    90000ULL, 0, 0.0000,  0,  0, 20 },
+    { 3000, 30,  1800000ULL, 0, 0.0000,  0,  0, -1 },
+    { 3100, 64,        0ULL, 0, 0.0000,  0,  0, -1 }
 };
 
 static StrengthParams GetStrengthParams(int elo) {
@@ -122,8 +122,8 @@ static StrengthParams GetStrengthParams(int elo) {
             if (a->maxNodes == 0 && b->maxNodes == 0) {
                 p.maxNodes = 0;
             } else {
-                double aNodes = (a->maxNodes > 0) ? (double)a->maxNodes : 2000000.0;
-                double bNodes = (b->maxNodes > 0) ? (double)b->maxNodes : 2000000.0;
+                double aNodes = (a->maxNodes > 0) ? (double)a->maxNodes : 4000000.0;
+                double bNodes = (b->maxNodes > 0) ? (double)b->maxNodes : 4000000.0;
                 p.maxNodes = (uint64_t)llround(exp(log(aNodes) * (1.0 - t) + log(bNodes) * t));
                 if (p.maxNodes < 1) p.maxNodes = 1;
             }
