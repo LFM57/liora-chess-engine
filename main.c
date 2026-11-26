@@ -141,6 +141,8 @@ void ParseOption(char *line) {
             strstr(line, "name Use NNUE") || strstr(line, "name use nnue")) {
         char *ptr = strstr(line, "value");
         if(ptr) {
+            int oldUseNNUE = UseNNUE;
+            int oldLoaded = NNUE_Loaded;
             ptr += 6;
             while(*ptr == ' ') ptr++;
             if(strncmp(ptr, "false", 5) == 0 || strncmp(ptr, "0", 1) == 0) {
@@ -150,6 +152,9 @@ void ParseOption(char *line) {
             } else if(strncmp(ptr, "true", 4) == 0 || strncmp(ptr, "1", 1) == 0) {
                 UseNNUE = 1;
                 InitNNUE(EvalFile);
+            }
+            if (UseNNUE != oldUseNNUE || NNUE_Loaded != oldLoaded) {
+                ClearTT();
             }
             for (int i = 0; i <= pos.hisPly; ++i) {
                 pos.accumStack[i].computed[WHITE] = 0;
@@ -171,6 +176,7 @@ void ParseOption(char *line) {
             if(UseNNUE) {
                 InitNNUE(EvalFile);
             }
+            ClearTT();
             for (int i = 0; i <= pos.hisPly; ++i) {
                 pos.accumStack[i].computed[WHITE] = 0;
                 pos.accumStack[i].computed[BLACK] = 0;
@@ -181,6 +187,7 @@ void ParseOption(char *line) {
     else if (FindOptionTokenIgnoreCase(line, "name UCI_LimitStrength")) {
         const char *ptr = FindOptionTokenIgnoreCase(line, "value");
         if (ptr) {
+            int oldLimit = LimitStrength;
             ptr += 5;
             while (*ptr == ' ' || *ptr == '\t') ptr++;
             if (StartsWithIgnoreCase(ptr, "true") || *ptr == '1') {
@@ -188,12 +195,16 @@ void ParseOption(char *line) {
             } else if (StartsWithIgnoreCase(ptr, "false") || *ptr == '0') {
                 LimitStrength = 0;
             }
+            if (LimitStrength != oldLimit) {
+                ClearTT();
+            }
         }
     }
     // Parse: setoption name UCI_Elo value <x>
     else if (FindOptionTokenIgnoreCase(line, "name UCI_Elo")) {
         const char *ptr = FindOptionTokenIgnoreCase(line, "value");
         if (ptr) {
+            int oldElo = UciElo;
             ptr += 5;
             while (*ptr == ' ' || *ptr == '\t') ptr++;
             if ((*ptr >= '0' && *ptr <= '9') || *ptr == '-' || *ptr == '+') {
@@ -201,6 +212,9 @@ void ParseOption(char *line) {
                 if (elo < 1200) elo = 1200;
                 if (elo > 3100) elo = 3100;
                 UciElo = elo;
+            }
+            if (UciElo != oldElo) {
+                ClearTT();
             }
         }
     }
