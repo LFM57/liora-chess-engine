@@ -1677,7 +1677,9 @@ void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int b
         }
         
         long t = GetTimeMs() - StartTime;
-        printf("info depth %d score cp %d nodes %llu time %ld pv ", d, score, (unsigned long long)Nodes, t);
+        printf("info depth %d ", d);
+        PrintUciScore(score);
+        printf(" nodes %llu time %ld pv ", (unsigned long long)Nodes, t);
         
         int i = 0;
         while(pvLine[i].from != NO_SQ && i < MAX_DEPTH) {
