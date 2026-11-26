@@ -16,6 +16,45 @@ static double GamePieceJitterSeed[5] = { 0.0, 0.0, 0.0, 0.0, 0.0 };
 static int ActivePieceJitter[5] = { 0, 0, 0, 0, 0 };
 static int HasActivePieceJitter = 0;
 
+static const Personality Personalities[PERS_COUNT] = {
+    // name          mat  pos  keep kAtk kSaf bPair pStr pass adv  contempt
+    { "Standard",    100, 100,   0,   0,   0,    0,   0,   0,  0,    0 },
+    { "Aggressive",   92, 112,  +3, +12,   0,   +5,   0,   0, +6,  +30 },
+    { "Defensive",   115,  88,  -3,  -4, +16,    0, +10,   0, -4,  -25 },
+    { "Positional",   88, 130,   0,   0,  +4,  +25, +12, +15,  0,  +10 },
+    { "Endgame",     105, 110,  -6,  -5,  +4,  +15,  +8, +35,  0,  +20 },
+    { "Savage",       75, 125,  +5, +24,  -8,    0,  -5,   0, +12, +55 },
+};
+
+int ActivePersonalityId = PERS_STANDARD;
+const Personality *ActivePersonality = &Personalities[PERS_STANDARD];
+int RootSide = WHITE;
+int LastRootSide = -1;
+
+static int EqualsIgnoreCaseAscii(const char *a, const char *b) {
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a;
+        char cb = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (ca != cb) return 0;
+        a++;
+        b++;
+    }
+    return (*a == '\0' && *b == '\0');
+}
+
+int SetPersonalityByName(const char *name) {
+    if (!name || !*name) return 0;
+    for (int i = 0; i < PERS_COUNT; ++i) {
+        if (EqualsIgnoreCaseAscii(name, Personalities[i].name)) {
+            ActivePersonalityId = i;
+            ActivePersonality = &Personalities[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static uint64_t SplitMix64(uint64_t x) {
     x += 0x9e3779b97f4a7c15ULL;
     x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
@@ -415,6 +454,7 @@ void InitTT(int mb) {
 
 void ClearTT() {
     TTAge = 0;
+    LastRootSide = -1;
     if (!TranspositionTable.clusters) return;
     for(int i = 0; i < TranspositionTable.numClusters; ++i) {
         for(int j = 0; j < TT_CLUSTER_SIZE; ++j) {
@@ -1681,6 +1721,12 @@ static Move SearchRootMultiPV(Board *pos, int maxDepth, long optTime, int multiP
 }
 
 void SearchPosition(Board *pos, int depth, int wtime, int btime, int winc, int binc, int movestogo, int movetime) {
+    if (ActivePersonalityId != PERS_STANDARD && LastRootSide != -1 && pos->side != LastRootSide) {
+        ClearTT();
+    }
+    RootSide = pos->side;
+    LastRootSide = pos->side;
+
     TTAge++;
     StopSearch = 0;
     Nodes = 0;
@@ -1994,6 +2040,12 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
     printf("Starting self-play generation: %d games at Depth %d -> File: %s\n", numGames, searchDepth, outFile);
 
     static Board gPos;
+    int savedPersonalityId = ActivePersonalityId;
+    const Personality *savedPersonality = ActivePersonality;
+    int savedRootSide = RootSide;
+    ActivePersonalityId = PERS_STANDARD;
+    ActivePersonality = &Personalities[PERS_STANDARD];
+
     StopTime = 0x7FFFFFFFFFFFFFFFLL; // Disable timer cutoff
     MaxNodes = 0;
     MaxQDepth = 0;
@@ -2131,5 +2183,11 @@ void RunDataGen(int numGames, int maxPlies, int searchDepth, const char *outFile
     }
 
     fclose(f);
+    ActivePersonalityId = savedPersonalityId;
+    ActivePersonality = savedPersonality;
+    RootSide = savedRootSide;
+    if (ActivePersonalityId != PERS_STANDARD) {
+        ClearTT();
+    }
     printf("Data generation complete! Saved to %s\n", outFile);
 }

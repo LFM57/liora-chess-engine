@@ -106,6 +106,30 @@ typedef struct {
     int numClusters;
 } TT;
 
+typedef enum {
+    PERS_STANDARD = 0,
+    PERS_AGGRESSIVE,
+    PERS_DEFENSIVE,
+    PERS_POSITIONAL,
+    PERS_ENDGAME,
+    PERS_SAVAGE,
+    PERS_COUNT
+} PersonalityId;
+
+typedef struct {
+    const char *name;
+    int materialWeight;   // 100 = neutral (NNUE decomposition)
+    int positionalWeight; // 100 = neutral
+    int keepPieces;       // per phase unit (+ keeps pieces, - trades down)
+    int myKingAttack;     // bonus per attack unit on enemy king ring
+    int myKingSafety;     // penalty per enemy attack unit on own king ring / shield gap
+    int bishopPair;       // extra cp for bishop pair
+    int pawnStruct;       // extra penalty for own weak pawns (doubled/isolated)
+    int passedPawn;       // extra endgame passed pawn & king-center scaling (%)
+    int advancePiece;     // cp per non-king piece in enemy territory
+    int contempt;         // cp draw avoidance (+ avoids draws, - seeks draws)
+} Personality;
+
 // Globals
 extern uint8_t TTAge;
 extern int PvArray[MAX_DEPTH];
@@ -117,6 +141,10 @@ extern int NNUE_Loaded;
 extern int LimitStrength;
 extern int UciElo;
 extern int MultiPV;
+extern int ActivePersonalityId;
+extern const Personality *ActivePersonality;
+extern int RootSide;
+extern int LastRootSide;
 extern uint64_t GameNoiseSeed;
 extern U64 SetMask[64];
 extern U64 ClearMask[64];
@@ -168,6 +196,7 @@ void InitTT(int mb);
 void ClearTT();
 long long GetTimeMs();
 void ReseedGameNoise(void);
+int SetPersonalityByName(const char *name);
 
 // polyglot
 extern char BookPath[512];

@@ -233,6 +233,27 @@ void ParseOption(char *line) {
             }
         }
     }
+    // Parse: setoption name Personality value <name>
+    else if (FindOptionTokenIgnoreCase(line, "name Personality")) {
+        const char *ptr = FindOptionTokenIgnoreCase(line, "value");
+        if (ptr) {
+            ptr += 5;
+            while (*ptr == ' ' || *ptr == '\t') ptr++;
+            char persName[64];
+            size_t len = 0;
+            while (*ptr && *ptr != '\n' && *ptr != '\r' && len < sizeof(persName) - 1) {
+                persName[len++] = *ptr++;
+            }
+            while (len > 0 && (persName[len - 1] == ' ' || persName[len - 1] == '\t')) {
+                len--;
+            }
+            persName[len] = '\0';
+            int oldPers = ActivePersonalityId;
+            if (SetPersonalityByName(persName) && ActivePersonalityId != oldPers) {
+                ClearTT();
+            }
+        }
+    }
 }
 
 int main() {
@@ -288,6 +309,7 @@ int main() {
             printf("option name UCI_LimitStrength type check default false\n");
             printf("option name UCI_Elo type spin default 1500 min 1200 max 3100\n");
             printf("option name MultiPV type spin default 1 min 1 max 256\n");
+            printf("option name Personality type combo default Standard var Standard var Aggressive var Defensive var Positional var Endgame var Savage\n");
             printf("uciok\n");
         } else if(!strncmp(line, "setoption", 9)) {
             ParseOption(line);
