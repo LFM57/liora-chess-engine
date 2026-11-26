@@ -104,6 +104,7 @@ gcc -O3 -Wall -Wextra board.c main.c nnue.c nnue_embed.c polyglot.c search.c -lm
 | `UCI_LimitStrength` | `check` | `false` | Limit playing strength to the target `UCI_Elo` rating using node/depth caps, MultiPV Softmax sampling, and low-Elo evaluation noise. |
 | `UCI_Elo` | `spin` | `1500` | Target playing strength in Elo (`1200` to `3100`) when `UCI_LimitStrength` is enabled (`3100` corresponds to full strength). |
 | `MultiPV` | `spin` | `1` | Number of principal variations (top lines) to compute and display during analysis (`1` to `256`). Ignored when `UCI_LimitStrength` is enabled. |
+| `Personality` | `combo` | `Standard` | Playing style preset (`Standard`, `Aggressive`, `Defensive`, `Positional`, `Endgame`, `Savage`). `Standard` has zero overhead; non-standard presets apply 3-layer NNUE decomposition, bitboard style modifiers, and phase-scaled contempt, and compose orthogonally with `UCI_LimitStrength` / `UCI_Elo`. |
 
 ## License
 
