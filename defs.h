@@ -171,6 +171,7 @@ void ReseedGameNoise(void);
 // polyglot
 extern char BookPath[512];
 Move GetBookMove(const Board *pos);
+Move GetBookMoveWeighted(const Board *pos, double weightExp);
 
 // utils
 int GetRank(int sq);

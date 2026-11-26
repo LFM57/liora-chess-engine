@@ -88,8 +88,8 @@ Move ConvertPolyglotMove(uint16_t polyMove, const Board *pos) {
     return empty;
 }
 
-// Binary Search inside the .bin file
-Move GetBookMove(const Board *pos) {
+// Binary Search inside the .bin file with weighted sampling
+Move GetBookMoveWeighted(const Board *pos, double weightExp) {
     Move empty = {NO_SQ, NO_SQ, EMPTY, EMPTY, 0};
     
     if(BookPath[0] == '\0') return empty;
@@ -107,7 +107,8 @@ Move GetBookMove(const Board *pos) {
     long low = 0;
     long high = (fileSize / 16) - 1; 
     
-    uint16_t foundMoves[16];
+    uint16_t foundMoves[64];
+    uint16_t foundWeights[64];
     int numFound = 0;
     
     while(low <= high) {
@@ -115,7 +116,7 @@ Move GetBookMove(const Board *pos) {
         fseek(f, mid * 16, SEEK_SET);
         
         U64 key;
-        fread(&key, sizeof(U64), 1, f);
+        if (fread(&key, sizeof(U64), 1, f) != 1) break;
         key = __builtin_bswap64(key); 
         
         if(key < polyHash) {
@@ -126,13 +127,14 @@ Move GetBookMove(const Board *pos) {
             long firstMatch = mid;
             while(firstMatch > 0) {
                 fseek(f, (firstMatch - 1) * 16, SEEK_SET);
-                U64 prevKey; fread(&prevKey, sizeof(U64), 1, f);
+                U64 prevKey;
+                if (fread(&prevKey, sizeof(U64), 1, f) != 1) break;
                 if(__builtin_bswap64(prevKey) != polyHash) break;
                 firstMatch--;
             }
             
             fseek(f, firstMatch * 16, SEEK_SET);
-            for(int i = 0; i < 16; i++) {
+            while(numFound < 64) {
                 U64 currentKey;
                 uint16_t move, weight;
                 uint32_t learn;
@@ -140,11 +142,13 @@ Move GetBookMove(const Board *pos) {
                 if(fread(&currentKey, sizeof(U64), 1, f) != 1) break;
                 if(__builtin_bswap64(currentKey) != polyHash) break;
                 
-                fread(&move, sizeof(uint16_t), 1, f);
-                fread(&weight, sizeof(uint16_t), 1, f);
-                fread(&learn, sizeof(uint32_t), 1, f);
+                if(fread(&move, sizeof(uint16_t), 1, f) != 1) break;
+                if(fread(&weight, sizeof(uint16_t), 1, f) != 1) break;
+                if(fread(&learn, sizeof(uint32_t), 1, f) != 1) break;
                 
-                foundMoves[numFound++] = __builtin_bswap16(move);
+                foundMoves[numFound] = __builtin_bswap16(move);
+                foundWeights[numFound] = __builtin_bswap16(weight);
+                numFound++;
             }
             break;
         }
@@ -153,9 +157,34 @@ Move GetBookMove(const Board *pos) {
     fclose(f);
     
     if(numFound > 0) {
-        int randomIndex = rand() % numFound;
-        return ConvertPolyglotMove(foundMoves[randomIndex], pos);
+        double weights[64];
+        double sumWeights = 0.0;
+        for (int i = 0; i < numFound; ++i) {
+            double w = (foundWeights[i] > 0) ? pow((double)foundWeights[i], weightExp) : 0.0;
+            weights[i] = w;
+            sumWeights += w;
+        }
+
+        int chosenIndex = numFound - 1;
+        if (sumWeights > 0.0) {
+            double r = ((double)rand() / ((double)RAND_MAX + 1.0)) * sumWeights;
+            double accum = 0.0;
+            for (int i = 0; i < numFound; ++i) {
+                accum += weights[i];
+                if (r < accum) {
+                    chosenIndex = i;
+                    break;
+                }
+            }
+        } else {
+            chosenIndex = rand() % numFound;
+        }
+        return ConvertPolyglotMove(foundMoves[chosenIndex], pos);
     }
     
     return empty;
+}
+
+Move GetBookMove(const Board *pos) {
+    return GetBookMoveWeighted(pos, 1.0);
 }
